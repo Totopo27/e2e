@@ -850,10 +850,14 @@ export class AgentDeviceSurface {
     return installed;
   }
 
-  private async snapshot(signal: AbortSignal, interactiveOnly: boolean): Promise<RawSnapshot> {
+  private async snapshot(signal: AbortSignal, interactiveOnly: boolean, budget?: ReadBudget): Promise<RawSnapshot> {
     let last: RawSnapshot = {};
     for (const backoffMs of SPARSE_RETRY_BACKOFF_MS) {
-      if (backoffMs > 0) await sleep(backoffMs, signal);
+      if (backoffMs > 0) {
+        budget?.check();
+        await sleep(backoffMs, signal);
+      }
+      budget?.check();
       if (signal.aborted) throw new EngineError('CANCELLED', 'snapshot cancelled', { retryable: false });
       last = await this.capture(signal, interactiveOnly);
       if (last.appBundleId !== undefined || last.appName !== undefined) {
@@ -889,7 +893,7 @@ export class AgentDeviceSurface {
   private async snapshotOrEmpty(operation: OperationContext, interactiveOnly: boolean): Promise<RawSnapshot> {
     const budget = this.readBudget('snapshot', operation.timeoutMs);
     try {
-      return await budget.send(() => this.snapshot(operation.signal, interactiveOnly));
+      return await budget.send(() => this.snapshot(operation.signal, interactiveOnly, budget));
     } catch (cause) {
       if (!this.managesApp && cause instanceof EngineError && cause.code === 'INVALID_STATE') return { nodes: [] };
       throw cause;
@@ -916,10 +920,10 @@ export class AgentDeviceSurface {
    * the harness measures every rect and point against the viewport, so an
    * invented one would misplace every tap.
    */
-  private async viewportFor(projected: ProjectedSnapshot, signal: AbortSignal): Promise<ViewportSize> {
+  private async viewportFor(projected: ProjectedSnapshot, signal: AbortSignal, timeoutMs?: number): Promise<ViewportSize> {
     const known = projected.viewport ?? this.knownViewport;
     if (known !== undefined) return known;
-    const probed = await this.probeViewport(signal);
+    const probed = await this.probeViewport(signal, timeoutMs);
     if (probed === undefined) {
       throw new EngineError(
         'ENGINE_FAILURE',
@@ -932,8 +936,8 @@ export class AgentDeviceSurface {
   }
 
   /** The device's logical screen size as its screenshot reports it; undefined when it reports none. */
-  private async probeViewport(signal: AbortSignal): Promise<ViewportSize | undefined> {
-    const result = await this.captureScreenshot(signal, async (shot) => shot);
+  private async probeViewport(signal: AbortSignal, timeoutMs?: number): Promise<ViewportSize | undefined> {
+    const result = await this.captureScreenshot(signal, async (shot) => shot, {}, timeoutMs);
     return logicalScreenSize(result);
   }
 
@@ -941,7 +945,7 @@ export class AgentDeviceSurface {
     const raw = await this.snapshotOrEmpty(operation, this.options.snapshot === 'interactive');
     const projected = this.project(raw);
     this.generation = new Map(projected.index.map((entry) => [entry.id, this.bind(entry, projected.index)]));
-    const viewport = await this.viewportFor(projected, operation.signal);
+    const viewport = await this.viewportFor(projected, operation.signal, operation.timeoutMs);
     const location = screenLocation(raw.appBundleId ?? raw.appName ?? this.appIdentity, screenTitle(projected));
     const capture = options?.pixels === true ? await this.capturePixels(operation, projected, viewport, { normalizeStatusBar: options.comparable === true }) : undefined;
     return {
@@ -1431,7 +1435,7 @@ export class AgentDeviceSurface {
   async screenshot(label: string | undefined, operation: OperationContext): Promise<string> {
     const attempt = this.attempt;
     if (attempt === undefined) throw invalidState('screenshot outside an attempt');
-    const masked = await this.maskedScreenshot(operation.signal);
+    const masked = await this.maskedScreenshot(operation.signal, operation.timeoutMs);
     attempt.screenshots += 1;
     const name = `${String(attempt.screenshots).padStart(3, '0')}-${sanitizeFilename(label ?? 'screenshot')}.png`;
     const relative = path.join('screenshots', name);
@@ -1441,8 +1445,8 @@ export class AgentDeviceSurface {
   }
 
   /** Raw device pixels; cleanup follows the capture even when its caller abandons it. */
-  private rawScreenshot(signal?: AbortSignal, capture: ScreenshotCapture = {}): Promise<Uint8Array> {
-    return this.captureScreenshot(signal, async (shot, file) => new Uint8Array(readFileSync(shot.path ?? file)), capture);
+  private rawScreenshot(signal?: AbortSignal, capture: ScreenshotCapture = {}, timeoutMs?: number): Promise<Uint8Array> {
+    return this.captureScreenshot(signal, async (shot, file) => new Uint8Array(readFileSync(shot.path ?? file)), capture, timeoutMs);
   }
 
   /**
@@ -1454,16 +1458,21 @@ export class AgentDeviceSurface {
     signal: AbortSignal | undefined,
     read: (shot: RawScreenshotResult, file: string) => Promise<T>,
     capture: ScreenshotCapture = {},
+    timeoutMs?: number,
   ): Promise<T> {
-    return this.command('screenshot', async (client) => {
-      const directory = mkdtempSync(path.join(tmpdir(), 'e2e-agent-device-'));
-      const file = path.join(directory, 'screenshot.png');
-      try {
-        return await read(await client.capture.screenshot({ path: file, ...(capture.normalizeStatusBar === true ? { normalizeStatusBar: true } : {}) }), file);
-      } finally {
-        rmSync(directory, { recursive: true, force: true });
-      }
-    }, signal);
+    const run = () =>
+      this.command('screenshot', async (client) => {
+        const directory = mkdtempSync(path.join(tmpdir(), 'e2e-agent-device-'));
+        const file = path.join(directory, 'screenshot.png');
+        try {
+          return await read(await client.capture.screenshot({ path: file, ...(capture.normalizeStatusBar === true ? { normalizeStatusBar: true } : {}) }), file);
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      }, signal);
+    if (timeoutMs === undefined) return run();
+    const budget = this.readBudget('screenshot', timeoutMs);
+    return budget.send(run);
   }
 
   /**
@@ -1472,16 +1481,16 @@ export class AgentDeviceSurface {
    * throws when a secure field cannot be covered, because an image that may
    * hold a credential must not leave the engine.
    */
-  private async maskedScreenshot(signal?: AbortSignal): Promise<{ data: Uint8Array; masked: number }> {
+  private async maskedScreenshot(signal?: AbortSignal, timeoutMs = 30_000): Promise<{ data: Uint8Array; masked: number }> {
     const operation: OperationContext = {
       signal: signal ?? new AbortController().signal,
-      timeoutMs: 30_000,
+      timeoutMs,
       runId: '',
       attemptId: '',
       origin: 'test',
     };
     const projected = this.project(await this.snapshotOrEmpty(operation, false));
-    const data = await this.rawScreenshot(signal);
+    const data = await this.rawScreenshot(signal, {}, timeoutMs);
     const masked = redactSecure(data, projected, projected.viewport ?? this.knownViewport);
     if (masked === undefined) {
       throw new EngineError('ENGINE_FAILURE', 'a secure field on screen could not be masked; screenshot withheld', {
@@ -1503,7 +1512,7 @@ export class AgentDeviceSurface {
   ): Promise<{ pixels: ObservationPixels; masked: number } | undefined> {
     let raw: Uint8Array;
     try {
-      raw = await this.rawScreenshot(operation.signal, capture);
+      raw = await this.rawScreenshot(operation.signal, capture, operation.timeoutMs);
     } catch {
       return undefined;
     }

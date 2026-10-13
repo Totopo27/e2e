@@ -99,6 +99,16 @@ export class ReadBudget {
     this.endsAt = Date.now() + timeoutMs;
   }
 
+  remainingMs(): number {
+    return Math.max(0, this.endsAt - Date.now());
+  }
+
+  check(): void {
+    if (this.endsAt - Date.now() <= 0) {
+      throw new EngineError('OPERATION_TIMEOUT', `${this.label} timed out before it was sent`, { retryable: false });
+    }
+  }
+
   send<T>(dispatch: () => Promise<T>): Promise<T> {
     const remaining = this.endsAt - Date.now();
     if (remaining <= 0) {

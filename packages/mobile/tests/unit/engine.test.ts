@@ -907,6 +907,45 @@ describe('observation', () => {
     }
   });
 
+  it('stops sparse retries when the read budget expires', async () => {
+    const h = harness();
+    await openAttempt(h);
+    vi.useFakeTimers();
+    try {
+      let snapshots = 0;
+      h.fake.respond('capture.snapshot', () => {
+        snapshots += 1;
+        return Promise.resolve({ nodes: [], snapshotQuality: { state: 'sparse' } });
+      });
+      const read = h.engine.locate!(
+        { kind: 'query', query: { kind: 'text', value: { kind: 'string', value: 'About', exact: true } } },
+        { ...operation(), timeoutMs: 500 },
+      );
+      const assertion = expect(read).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+      // At 500ms, first backoff (1200ms) has not completed, budget expires
+      await vi.advanceTimersByTimeAsync(1_500);
+      await assertion;
+      expect(snapshots).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds screenshot by operation budget', async () => {
+    const h = harness();
+    await openAttempt(h);
+    vi.useFakeTimers();
+    try {
+      h.fake.respond('capture.screenshot', () => new Promise((resolve) => setTimeout(() => resolve({ path: '' }), 5_000)));
+      const shot = h.engine.artifacts!.screenshot('hung shot', { ...operation(), timeoutMs: 1_000 });
+      const assertion = expect(shot).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancels a snapshot when the operation aborts', async () => {
     const h = harness();
     h.fake.respond('capture.snapshot', () => new Promise(() => undefined));

@@ -115,9 +115,9 @@ export interface PollConditionOptions {
  * past the deadline has no budget left. A read the deadline cut off (see
  * `cutOffAtDeadline`) after an earlier one completed saw nothing: the poll
  * ends there. A negation then passes if it has held long enough by the
- * time the read is cut off: the read left less than one poll tick unseen, no
- * more than the gap between any two reads, so a short budget still passes at
- * its deadline on what it saw.
+ * time the read is cut off: the read left less than one poll tick (or the
+ * declared read latency) unseen, no more than the gap between any two reads,
+ * so a short budget still passes at its deadline on what it saw.
  */
 export async function pollCondition(options: PollConditionOptions): Promise<void> {
   const { deadline, negated } = options;
