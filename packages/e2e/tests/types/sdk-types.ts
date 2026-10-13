@@ -132,7 +132,7 @@ engineSnapshot.treeUnavailable satisfies true | undefined;
 // A target inherits its platform from the engine; the resolver rejects one with neither.
 ({ targets: [{ engine }] }) satisfies E2EConfig;
 ({
-  targets: [{ engine, app: { url: 'http://localhost:3000', command: { executable: 'pnpm', args: ['dev'] }, readyUrl: 'http://localhost:3000/health' } }],
+  targets: [{ engine, app: { url: 'http://localhost:3000', command: { executable: 'pnpm', args: ['dev'], inheritEnv: ['DATABASE_URL', 'STRIPE_*'] }, readyUrl: 'http://localhost:3000/health' } }],
 }) satisfies E2EConfig;
 ({
   targets: [{ engine, app: { bundleId: 'dev.shop.app', appPath: './build/Shop.app', launchArguments: ['-e2e'], permissions: { camera: 'grant' } } }],

@@ -215,6 +215,23 @@ describe('resolveConfig', () => {
     );
   });
 
+  it('validates inheritEnv as an array of non-empty strings', () => {
+    const url = 'http://localhost:3000';
+    expect(() => resolveApp({ url, command: { executable: 'node', inheritEnv: 'FOO' } } as never)).toThrow(
+      expect.objectContaining({ code: 'INVALID_CONFIG', message: 'target "web" app.command.inheritEnv must be an array of strings' }),
+    );
+    expect(() => resolveApp({ url, command: { executable: 'node', inheritEnv: [123] } } as never)).toThrow(
+      expect.objectContaining({ code: 'INVALID_CONFIG', message: 'target "web" app.command.inheritEnv[0] must be a non-empty string' }),
+    );
+    expect(() => resolveApp({ url, command: { executable: 'node', inheritEnv: [''] } } as never)).toThrow(
+      expect.objectContaining({ code: 'INVALID_CONFIG', message: 'target "web" app.command.inheritEnv[0] must be a non-empty string' }),
+    );
+    expect(commandOf({ url, command: { executable: 'node', inheritEnv: ['DATABASE_URL', 'STRIPE_*'] } } as never).command.inheritEnv).toEqual([
+      'DATABASE_URL',
+      'STRIPE_*',
+    ]);
+  });
+
   it('takes only strings in a command\'s args and env, naming secrets.get() for a handle', () => {
     const url = 'http://localhost:3000';
     expect(() => resolveApp({ url, command: { executable: 'node', args: ['server.mjs', 3000] } } as never)).toThrow(
@@ -250,7 +267,7 @@ describe('resolveConfig', () => {
       expect.objectContaining({ code: 'INVALID_CONFIG', message: 'target "web" app.command has unknown key "arg"; did you mean "args"?' }),
     );
     expect(() => resolveApp({ url, command: { executable: 'node', readyUrl: url } } as never)).toThrow(
-      /app\.command has unknown key "readyUrl"; expected one of executable, args, cwd, env, startupTimeout, shutdownTimeout, log, reuseExisting$/,
+      /app\.command has unknown key "readyUrl"; expected one of executable, args, cwd, env, startupTimeout, shutdownTimeout, log, inheritEnv, reuseExisting$/,
     );
   });
 

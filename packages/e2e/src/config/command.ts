@@ -28,6 +28,7 @@ const COMMAND_KEYS: readonly string[] = Object.keys({
   startupTimeout: true,
   shutdownTimeout: true,
   log: true,
+  inheritEnv: true,
   reuseExisting: true,
 } satisfies Record<keyof CommandConfig, true>);
 
@@ -65,7 +66,7 @@ function commandString(value: unknown, label: string): string {
 export function normalizeCommand(command: CommandConfig, label: string): CommandConfig {
   if (!isRecord(command)) throw new ConfigurationError('INVALID_CONFIG', `${label} must be an object`);
   rejectUnknownKeys(label, command, COMMAND_KEYS);
-  const { executable, args, cwd, env, startupTimeout, shutdownTimeout, log, reuseExisting } = command;
+  const { executable, args, cwd, env, startupTimeout, shutdownTimeout, log, inheritEnv, reuseExisting } = command;
   if (typeof executable !== 'string' || executable.trim().length === 0) {
     throw new ConfigurationError('INVALID_CONFIG', `${label}.executable is required`);
   }
@@ -73,6 +74,15 @@ export function normalizeCommand(command: CommandConfig, label: string): Command
     throw new ConfigurationError('INVALID_CONFIG', `${label}.args must be an array of strings`);
   }
   const strings = args?.map((arg: unknown, index) => commandString(arg, `${label}.args[${index}]`));
+  if (inheritEnv !== undefined && !Array.isArray(inheritEnv)) {
+    throw new ConfigurationError('INVALID_CONFIG', `${label}.inheritEnv must be an array of strings`);
+  }
+  const inheritedPatterns = inheritEnv?.map((pattern: unknown, index) => {
+    if (typeof pattern !== 'string' || pattern.trim() === '') {
+      throw new ConfigurationError('INVALID_CONFIG', `${label}.inheritEnv[${index}] must be a non-empty string`);
+    }
+    return pattern;
+  });
   if (env !== undefined && !isRecord(env)) {
     throw new ConfigurationError('INVALID_CONFIG', `${label}.env must be an object of variable name to string`);
   }
@@ -100,6 +110,7 @@ export function normalizeCommand(command: CommandConfig, label: string): Command
       startupTimeout,
       shutdownTimeout,
       log,
+      inheritEnv: inheritedPatterns === undefined ? undefined : Object.freeze(inheritedPatterns),
       reuseExisting,
     }),
   );

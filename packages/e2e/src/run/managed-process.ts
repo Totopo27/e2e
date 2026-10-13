@@ -12,6 +12,21 @@ import type { CommandConfig } from '../types.ts';
 
 const INHERITED_ENV = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'SystemRoot', 'COMSPEC'] as const;
 
+export const APP_INHERIT_ENV_VAR = 'E2E_APP_INHERIT_ENV';
+
+/** Returns true if a variable name matches any pattern (exact or trailing-*). */
+function matchesInheritedPattern(name: string, patterns: readonly string[]): boolean {
+  for (const pattern of patterns) {
+    if (pattern.endsWith('*')) {
+      const prefix = pattern.slice(0, -1);
+      if (name.startsWith(prefix)) return true;
+    } else if (name === pattern) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Readiness polling starts fast and backs off; a booting server answers late, not on a schedule. */
 const READY_POLL_MIN_MS = 25;
 const READY_POLL_MAX_MS = 250;
@@ -192,6 +207,17 @@ export class ManagedProcess {
     for (const key of INHERITED_ENV) {
       const value = process.env[key];
       if (value !== undefined) env[key] = value;
+    }
+    const envPatterns = [
+      ...(this.command.inheritEnv ?? []),
+      ...(process.env[APP_INHERIT_ENV_VAR]?.split(',').map((p) => p.trim()).filter((p) => p.length > 0) ?? []),
+    ];
+    if (envPatterns.length > 0) {
+      for (const [key, value] of Object.entries(process.env)) {
+        if (value !== undefined && matchesInheritedPattern(key, envPatterns)) {
+          env[key] = value;
+        }
+      }
     }
     Object.assign(env, this.command.env ?? {});
 
