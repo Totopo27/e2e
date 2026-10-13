@@ -75,6 +75,7 @@ import {
   type Rect,
   type Point,
   InputBudget,
+  ReadBudget,
 } from './support.ts';
 
 /** Hinge poses `device.fold` accepts: `closed` lights the outer display, `half-open` and `open` the inner one. */
@@ -468,6 +469,11 @@ export class AgentDeviceSurface {
   /** The budget one input runs under; its device commands stay in flight until they settle. */
   inputBudget(label: string, timeoutMs: number): InputBudget {
     return new InputBudget(label, timeoutMs, (pending) => this.track(pending));
+  }
+
+  /** The budget one read runs under; its device commands stay in flight until they settle. */
+  readBudget(label: string, timeoutMs: number): ReadBudget {
+    return new ReadBudget(label, timeoutMs, (pending) => this.track(pending));
   }
 
   /** Registers one device command as in flight until it settles. */
@@ -881,8 +887,9 @@ export class AgentDeviceSurface {
    * move is the open tool, and failing the step would take that move away.
    */
   private async snapshotOrEmpty(operation: OperationContext, interactiveOnly: boolean): Promise<RawSnapshot> {
+    const budget = this.readBudget('snapshot', operation.timeoutMs);
     try {
-      return await this.snapshot(operation.signal, interactiveOnly);
+      return await budget.send(() => this.snapshot(operation.signal, interactiveOnly));
     } catch (cause) {
       if (!this.managesApp && cause instanceof EngineError && cause.code === 'INVALID_STATE') return { nodes: [] };
       throw cause;

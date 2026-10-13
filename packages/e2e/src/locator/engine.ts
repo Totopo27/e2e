@@ -189,7 +189,7 @@ export class LocatorEngine {
         return await this.session.locate(expression, this.operationWithin(deadline));
       } catch (cause) {
         // A retry the deadline cut off saw nothing new: the wait ends on the failure it was retrying.
-        if (retried !== undefined && cutOffAtDeadline(cause, startedWithMs)) throw translateLocatorError(retried, expression);
+        if (retried !== undefined && cutOffAtDeadline(cause, startedWithMs, this.session.readLatency)) throw translateLocatorError(retried, expression);
         const engineError = asEngineError(cause);
         if (engineError?.retryable === true) {
           if (missingFrame === 'empty' && engineError.code === 'FRAME_NOT_FOUND') return [];
@@ -230,7 +230,7 @@ export class LocatorEngine {
         refs = await this.resolveOnce(expression, deadline);
       } catch (cause) {
         // A resolve the deadline cut off, after one that matched nothing, is the wait running out.
-        if (sampled && cutOffAtDeadline(cause, startedWithMs)) throw notFound(cause);
+        if (sampled && cutOffAtDeadline(cause, startedWithMs, this.session.readLatency)) throw notFound(cause);
         throw cause;
       }
       sampled = true;
@@ -414,7 +414,7 @@ export class LocatorEngine {
       try {
         ({ node } = await this.tryRead(expression, deadline));
       } catch (cause) {
-        if (sampled && cutOffAtDeadline(cause, startedWithMs)) throw notVisible(cause);
+        if (sampled && cutOffAtDeadline(cause, startedWithMs, this.session.readLatency)) throw notVisible(cause);
         throw cause;
       }
       sampled = true;

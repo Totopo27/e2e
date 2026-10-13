@@ -681,6 +681,13 @@ export interface Engine {
    */
   readonly workers?: number;
   /**
+   * Expected latency in ms for a single observation or locator snapshot read.
+   * A slow engine (e.g. mobile iOS snapshot taking 1-2 s) declares this so
+   * poll loops (like locator engine or pollCondition) can grant the last read
+   * past the deadline instead of treating it as hung with budget to spare.
+   */
+  readonly readLatency?: number;
+  /**
    * The `secrets.get()` handles the engine's options hold, such as a
    * basic-auth password. The config load checks each names a configured
    * secret (`INVALID_CONFIG` otherwise), and only these resolve through

@@ -351,6 +351,30 @@ describe('pollCondition', () => {
     await expect(early).rejects.toBe(cut);
   });
 
+  it('honors readLatency in pollCondition: treats a last read within readLatency as cut off, not hung', async () => {
+    vi.useFakeTimers();
+    const cut = new EngineError('OPERATION_TIMEOUT', 'locate timed out', { retryable: false });
+    const deadline = new Deadline(600);
+    let calls = 0;
+    const promise = pollCondition({
+      deadline,
+      signal: new AbortController().signal,
+      negated: false,
+      readLatency: 1_500,
+      evaluate: async () => {
+        calls += 1;
+        if (calls === 1) return false;
+        // Started with ~500ms remaining, which is < readLatency (1500ms) but >= POLL_INTERVAL_MS (100ms)
+        throw cut;
+      },
+      onTimeout: () => new Error('poll timed out'),
+    });
+    const assertion = expect(promise).rejects.toThrow('poll timed out');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await assertion;
+    expect(calls).toBe(2);
+  });
+
   it('keeps a read that hung most of the wait a failure, and never lets a negation pass on it', async () => {
     vi.useFakeTimers();
     const cut = new EngineError('OPERATION_TIMEOUT', 'locate timed out', { retryable: false });

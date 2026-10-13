@@ -51,7 +51,7 @@ function foreignStale(retryable: boolean): Error {
   return error;
 }
 
-function makeEngine(script: ScreenScript, options: { actionTimeout?: number } = {}) {
+function makeEngine(script: ScreenScript, options: { actionTimeout?: number; readLatency?: number } = {}) {
   const calls = { resolve: 0, read: 0, perform: 0 };
   const origins: (string | undefined)[] = [];
   const resolveTimeouts: number[] = [];
@@ -61,6 +61,7 @@ function makeEngine(script: ScreenScript, options: { actionTimeout?: number } = 
     return step;
   };
   const session = {
+      ...(options.readLatency === undefined ? {} : { readLatency: options.readLatency }),
       async locate(_expression: LocatorExpression, operation: OperationContext) {
         resolveTimeouts.push(operation.timeoutMs);
         const step = next(script.resolve, 'resolve');
@@ -212,6 +213,24 @@ describe('LocatorEngine resolve retry contract', () => {
       }) as unknown as Array<() => readonly NodeRef[]>,
     });
     await expect(engine.resolveExactlyOne(EXPRESSION, deadline)).rejects.toMatchObject({ code: 'ACTION_FAILED' });
+  });
+
+  it('treats a slow last resolve within declared readLatency as missing, not a timeout', async () => {
+    const deadline = new Deadline(200);
+    let calls = 0;
+    const { engine } = makeEngine(
+      {
+        resolve: Array.from({ length: 50 }, () => async () => {
+          calls += 1;
+          if (calls === 1) return [] as readonly NodeRef[];
+          // Second round starts with 100ms left, taking full 100ms and timing out
+          await new Promise((resolve) => setTimeout(resolve, deadline.remaining()));
+          throw new EngineError('OPERATION_TIMEOUT', 'locate timed out', { retryable: false });
+        }) as unknown as Array<() => readonly NodeRef[]>,
+      },
+      { readLatency: 1_500 },
+    );
+    await expect(engine.resolveExactlyOne(EXPRESSION, deadline)).rejects.toMatchObject({ code: 'LOCATOR_NOT_FOUND' });
   });
 
   it('ends a frame wait the deadline cut off on the missing frame, as LOCATOR_NOT_FOUND', async () => {

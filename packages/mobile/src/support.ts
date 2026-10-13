@@ -28,8 +28,7 @@ const MIN_ANSWER_MS = 250;
 /**
  * One input operation's budget (`actionTimeout`, or the call's `timeout`),
  * which the harness signal does not enforce. Only the device commands that
- * send input run under it; reads stay unbounded, so a locator poll keeps its
- * last snapshot and a target settling before a tap is relocated in full.
+ * send input run under it.
  */
 export class InputBudget {
   private readonly endsAt: number;
@@ -81,6 +80,36 @@ export class InputBudget {
     return new EngineError('ACTION_MAY_HAVE_COMMITTED', `${this.label} timed out before the device answered; its input may have been dispatched`, {
       retryable: false,
     });
+  }
+}
+
+/**
+ * Bounds a device read (snapshot or screenshot) by the operation's budget.
+ * When the budget expires before or during the read, it fails with
+ * `OPERATION_TIMEOUT` instead of holding the test until the test timeout.
+ */
+export class ReadBudget {
+  private readonly endsAt: number;
+
+  constructor(
+    private readonly label: string,
+    timeoutMs: number,
+    private readonly track: <T>(pending: Promise<T>) => Promise<T>,
+  ) {
+    this.endsAt = Date.now() + timeoutMs;
+  }
+
+  send<T>(dispatch: () => Promise<T>): Promise<T> {
+    const remaining = this.endsAt - Date.now();
+    if (remaining <= 0) {
+      return Promise.reject(
+        new EngineError('OPERATION_TIMEOUT', `${this.label} timed out before it was sent`, { retryable: false }),
+      );
+    }
+    const pending = this.track(dispatch());
+    return withTimeout(pending, remaining, () =>
+      new EngineError('OPERATION_TIMEOUT', `${this.label} timed out before the device answered`, { retryable: false }),
+    );
   }
 }
 

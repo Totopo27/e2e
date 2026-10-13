@@ -280,7 +280,7 @@ class ScreenImpl implements Screen {
         try {
           ({ node } = await engine.tryRead(internals.expression, deadline));
         } catch (cause) {
-          if (sampled && cutOffAtDeadline(cause, startedWithMs)) throw notVisible(cause);
+          if (sampled && cutOffAtDeadline(cause, startedWithMs, engine.session.readLatency)) throw notVisible(cause);
           throw cause;
         }
         sampled = true;
@@ -610,6 +610,7 @@ class LocatorImpl extends ScreenImpl implements Locator {
           deadline,
           signal: engine.signal,
           negated: false,
+          ...(engine.session.readLatency === undefined ? {} : { readLatency: engine.session.readLatency }),
           evaluate: async () => {
             const { node } = await engine.tryRead(this.expression, deadline, ABSENCE_STATES.has(state) ? 'empty' : 'wait');
             samples.add(node === null ? 'absent' : isNodeVisible(node) ? 'visible' : 'hidden');

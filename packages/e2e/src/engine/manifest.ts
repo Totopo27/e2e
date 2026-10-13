@@ -20,6 +20,7 @@ const KNOWN_KEYS = [
   'spiVersion',
   'platform',
   'workers',
+  'readLatency',
   'observe',
   'locate',
   'perform',
@@ -201,6 +202,9 @@ export function defineEngine(spec: Engine): EngineHandle {
   if (spec.workers !== undefined && (!Number.isSafeInteger(spec.workers) || spec.workers < 1)) {
     throw invalid(name, 'workers must be a positive safe integer: the most workers the engine serves per target');
   }
+  if (spec.readLatency !== undefined && (!Number.isSafeInteger(spec.readLatency) || spec.readLatency < 0)) {
+    throw invalid(name, 'readLatency must be a non-negative safe integer');
+  }
 
   const capabilities = new Set<EngineCapability>();
   if (spec.observe !== undefined) capabilities.add('observation');
@@ -248,6 +252,7 @@ export function defineEngine(spec: Engine): EngineHandle {
     spiVersion: spec.spiVersion,
     platform: spec.platform,
     workers: spec.workers,
+    ...(spec.readLatency === undefined ? {} : { readLatency: spec.readLatency }),
   });
   for (const member of FUNCTION_MEMBERS) {
     const fn = spec[member];

@@ -66,14 +66,14 @@ export const POLL_INTERVAL_MS = 100;
 
 /**
  * Whether `cause` is a read a wait's deadline cut off: an operation timeout
- * of a read that started with less than one poll tick of the wait left, so
- * it timed out because the wait did, not because the app stopped answering.
- * A read that started with more and still timed out hung, and its timeout is
- * the failure. Reads the engine error a locator failure wraps as well as a
- * bare one.
+ * of a read that started with less than one poll tick (or the engine's read
+ * latency, whichever is larger) of the wait left, so it timed out because the
+ * wait did, not because the app stopped answering. A read that started with
+ * more and still timed out hung, and its timeout is the failure. Reads the
+ * engine error a locator failure wraps as well as a bare one.
  */
-export function cutOffAtDeadline(cause: unknown, startedWithMs: number): boolean {
-  return startedWithMs < POLL_INTERVAL_MS && isOperationTimeout(cause);
+export function cutOffAtDeadline(cause: unknown, startedWithMs: number, latencyMs = 0): boolean {
+  return startedWithMs < Math.max(POLL_INTERVAL_MS, latencyMs) && isOperationTimeout(cause);
 }
 
 /** Whether `cause` is the engine's `OPERATION_TIMEOUT`, bare or wrapped by the locator failure it was translated into. */
@@ -89,6 +89,8 @@ export interface PollConditionOptions {
   readonly deadline: Deadline;
   readonly signal: AbortSignal;
   readonly negated: boolean;
+  /** Expected latency in ms for a single read, if declared by the engine. */
+  readonly readLatency?: number;
   /**
    * Evaluates the positive condition once, every read bounded by
    * `deadline`: a read on a longer budget outlasts the poll. Returns
@@ -132,7 +134,7 @@ export async function pollCondition(options: PollConditionOptions): Promise<void
       value = await options.evaluate();
       sampled = true;
     } catch (cause) {
-      if (!sampled || !cutOffAtDeadline(cause, startedWithMs)) throw cause;
+      if (!sampled || !cutOffAtDeadline(cause, startedWithMs, options.readLatency)) throw cause;
       if (negated && holds(Math.min(Date.now(), deadline.endsAt))) return;
       throw await options.onTimeout(cause);
     }

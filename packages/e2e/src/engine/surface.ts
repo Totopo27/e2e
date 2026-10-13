@@ -165,6 +165,8 @@ export interface TargetSession {
   readonly pointerActions: ReadonlySet<PointerActionKind>;
   /** Whether the engine declared `tapModifiers`, so the tap actions may carry `modifiers`. */
   readonly tapModifiers: boolean;
+  /** Expected latency in ms for a single observation or locator snapshot read, if declared by the engine. */
+  readonly readLatency?: number;
   /** Captures one atomic agent observation; the harness redacts it downstream. */
   observe(operation: OperationContext, options?: EngineObserveOptions): Promise<Observation>;
   /** Resolves immediately; the runner owns query polling and strictness. */

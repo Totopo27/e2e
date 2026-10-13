@@ -892,15 +892,16 @@ describe('observation', () => {
     expect(settled).toBe(true);
   });
 
-  it('lets a locate outlive its budget: a poll keeps its last read, so a slow screen reads as missing, not as a timeout', async () => {
+  it('bounds a snapshot by the operation budget', async () => {
     const h = harness();
     await openAttempt(h);
     vi.useFakeTimers();
     try {
-      h.fake.respond('capture.snapshot', () => new Promise((resolve) => setTimeout(() => resolve(SETTINGS_SNAPSHOT), 3_000)));
+      h.fake.respond('capture.snapshot', () => new Promise((resolve) => setTimeout(() => resolve(SETTINGS_SNAPSHOT), 5_000)));
       const read = h.engine.locate!({ kind: 'query', query: { kind: 'text', value: { kind: 'string', value: 'About', exact: true } } }, { ...operation(), timeoutMs: 1_000 });
-      await vi.advanceTimersByTimeAsync(3_000);
-      await expect(read).resolves.toHaveLength(1);
+      const assertion = expect(read).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await assertion;
     } finally {
       vi.useRealTimers();
     }

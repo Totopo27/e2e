@@ -17,6 +17,9 @@ import { AgentDeviceSurface, assertPermissions } from './surface.ts';
 
 const surfaces = new WeakMap<EngineHandle, AgentDeviceSurface>();
 
+/** Expected latency for a device snapshot read, granting slow reads past the deadline. */
+const MOBILE_READ_LATENCY_MS = 2_000;
+
 /** Assembles the manifest for one surface. Exported for tests that script the client. */
 export function buildEngine(surface: AgentDeviceSurface): EngineHandle {
   const handle = defineEngine({
@@ -24,6 +27,7 @@ export function buildEngine(surface: AgentDeviceSurface): EngineHandle {
     version: ownVersion(),
     spiVersion: 1,
     platform: surface.options.platform,
+    readLatency: MOBILE_READ_LATENCY_MS,
     ...(surface.pool.size === undefined ? {} : { workers: surface.pool.size }),
     prepare: (info) => surface.pool.prepare(info),
     finish: (info) => surface.pool.finish(info),

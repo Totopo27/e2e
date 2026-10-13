@@ -672,8 +672,10 @@ message and hint, never `LAUNCH_TIMEOUT`, `ACTION_FAILED`, or
 `back` gets its `timeout` (default `actionTimeout`). If the device doesn't
 answer in time, the step fails with `ACTION_FAILED` and isn't retried: the
 input may have landed. A `longPress` that holds at least as long as the
-time left is refused before it's sent; raise its `timeout`. Finding the
-element isn't cut off, so a missing one still fails as `LOCATOR_NOT_FOUND`.
+time left is refused before it's sent; raise its `timeout`. Device reads
+(snapshots and screenshots) are bounded by their operation timeout, and slow
+reads past the deadline are granted the engine's read latency so a missing
+element still fails as `LOCATOR_NOT_FOUND`.
 
 <CodeGroup>
 ```bash npm

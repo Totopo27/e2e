@@ -177,6 +177,7 @@ class AsyncExpectationImpl implements AsyncExpectation {
           deadline,
           signal: engine.signal,
           negated: this.negated,
+          ...(engine.session.readLatency === undefined ? {} : { readLatency: engine.session.readLatency }),
           evaluate: async () => {
             const sample = await this.sample(spec, deadline);
             lastSample = sample;
