@@ -1021,19 +1021,19 @@ export interface CommandConfig {
   cwd?: string;
   /** Added to the inherited set; `{port}` expands in values. */
   env?: Readonly<Record<string, string>>;
+  /**
+   * Host environment variable names or trailing-* patterns to inherit into the
+   * spawned app process in addition to default PATH, HOME, and temp variables.
+   * `command.env` values take precedence over inherited variables.
+   * Also configured via `E2E_APP_INHERIT_ENV`.
+   */
+  inheritEnv?: readonly string[];
   /** Ready-probe budget in milliseconds; default 60000. Expiry is `APP_UNREACHABLE`. */
   startupTimeout?: number;
   /** Grace period before force-kill in milliseconds; default 10000. */
   shutdownTimeout?: number;
   /** File that receives the process's stdout and stderr, appended, resolved from the project root. Omitted discards output. */
   log?: string;
-  /**
-   * Host environment variable names or trailing-* patterns to inherit into the
-   * spawned app process in addition to default PATH, HOME, and temp variables.
-   * `command.env` values still take precedence over inherited variables.
-   * Also configured via `E2E_APP_INHERIT_ENV`.
-   */
-  inheritEnv?: readonly string[];
   /**
    * When the readiness URL already answers before the command starts, use that
    * process instead of spawning: nothing is started and nothing is stopped.

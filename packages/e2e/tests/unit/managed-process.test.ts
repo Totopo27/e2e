@@ -73,6 +73,66 @@ describe('ManagedProcess', () => {
     expect(Date.now() - startedAt).toBeLessThan(5_000);
     await app.stop();
   }, 20_000);
+
+  it('inherits environment variables specified in inheritEnv and E2E_APP_INHERIT_ENV', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-process-env-'));
+    process.env['TEST_APP_INHERITED_A'] = 'val_a';
+    process.env['TEST_APP_INHERITED_B'] = 'val_b';
+    process.env['TEST_APP_OTHER'] = 'val_other';
+    process.env['TEST_APP_OVERRIDDEN'] = 'from_host';
+    process.env['E2E_APP_INHERIT_ENV'] = 'TEST_APP_INHERITED_B, TEST_APP_PREFIX_*, test_app_case_insensitive';
+    process.env['TEST_APP_PREFIX_ONE'] = 'prefix_1';
+    process.env['TEST_APP_PREFIX_TWO'] = 'prefix_2';
+    process.env['TEST_APP_CASE_INSENSITIVE'] = 'case_ok';
+    try {
+      const dumpScript = `
+        const fs = require('node:fs');
+        const env = {
+          A: process.env.TEST_APP_INHERITED_A,
+          B: process.env.TEST_APP_INHERITED_B,
+          OTHER: process.env.TEST_APP_OTHER,
+          OVERRIDDEN: process.env.TEST_APP_OVERRIDDEN,
+          P1: process.env.TEST_APP_PREFIX_ONE,
+          P2: process.env.TEST_APP_PREFIX_TWO,
+          CASE: process.env.TEST_APP_CASE_INSENSITIVE,
+        };
+        fs.writeFileSync(process.argv[1], JSON.stringify(env));
+      `;
+      const outFile = path.join(dir, 'env.json');
+      const app = new ManagedProcess(
+        'app.command',
+        {
+          executable: process.execPath,
+          args: ['-e', dumpScript, outFile],
+          inheritEnv: ['TEST_APP_INHERITED_A', 'TEST_APP_OVERRIDDEN'],
+          env: { TEST_APP_OVERRIDDEN: 'from_config' },
+        },
+        dir,
+        { waitForExit: true },
+      );
+      await app.start();
+      const result = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+      expect(result).toEqual({
+        A: 'val_a',
+        B: 'val_b',
+        OVERRIDDEN: 'from_config',
+        P1: 'prefix_1',
+        P2: 'prefix_2',
+        ...(process.platform === 'win32' ? { CASE: 'case_ok' } : {}),
+      });
+      expect(result.OTHER).toBeUndefined();
+    } finally {
+      delete process.env['TEST_APP_INHERITED_A'];
+      delete process.env['TEST_APP_INHERITED_B'];
+      delete process.env['TEST_APP_OTHER'];
+      delete process.env['TEST_APP_OVERRIDDEN'];
+      delete process.env['E2E_APP_INHERIT_ENV'];
+      delete process.env['TEST_APP_PREFIX_ONE'];
+      delete process.env['TEST_APP_PREFIX_TWO'];
+      delete process.env['TEST_APP_CASE_INSENSITIVE'];
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 /** Prints one line to stdout and one to stderr, then exits with `exitCode`. */
@@ -467,58 +527,4 @@ describe('ManagedProcess reuseExisting', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   }, 20_000);
-
-  it('inherits environment variables specified in inheritEnv and E2E_APP_INHERIT_ENV', async () => {
-    process.env['TEST_APP_INHERITED_A'] = 'val_a';
-    process.env['TEST_APP_INHERITED_B'] = 'val_b';
-    process.env['TEST_APP_OTHER'] = 'val_other';
-    process.env['TEST_APP_OVERRIDDEN'] = 'from_host';
-    process.env['E2E_APP_INHERIT_ENV'] = 'TEST_APP_INHERITED_B, TEST_APP_PREFIX_*';
-    process.env['TEST_APP_PREFIX_ONE'] = 'prefix_1';
-    process.env['TEST_APP_PREFIX_TWO'] = 'prefix_2';
-    try {
-      const dumpScript = `
-        const fs = require('node:fs');
-        const env = {
-          A: process.env.TEST_APP_INHERITED_A,
-          B: process.env.TEST_APP_INHERITED_B,
-          OTHER: process.env.TEST_APP_OTHER,
-          OVERRIDDEN: process.env.TEST_APP_OVERRIDDEN,
-          P1: process.env.TEST_APP_PREFIX_ONE,
-          P2: process.env.TEST_APP_PREFIX_TWO,
-        };
-        fs.writeFileSync(process.argv[1], JSON.stringify(env));
-      `;
-      const outFile = path.join(dir, 'env.json');
-      const app = new ManagedProcess(
-        'app.command',
-        {
-          executable: process.execPath,
-          args: ['-e', dumpScript, outFile],
-          inheritEnv: ['TEST_APP_INHERITED_A', 'TEST_APP_OVERRIDDEN'],
-          env: { TEST_APP_OVERRIDDEN: 'from_config' },
-        },
-        dir,
-        { waitForExit: true },
-      );
-      await app.start();
-      const result = JSON.parse(fs.readFileSync(outFile, 'utf8'));
-      expect(result).toEqual({
-        A: 'val_a',
-        B: 'val_b',
-        OVERRIDDEN: 'from_config', // command.env wins over inherited
-        P1: 'prefix_1',
-        P2: 'prefix_2',
-      });
-      expect(result.OTHER).toBeUndefined();
-    } finally {
-      delete process.env['TEST_APP_INHERITED_A'];
-      delete process.env['TEST_APP_INHERITED_B'];
-      delete process.env['TEST_APP_OTHER'];
-      delete process.env['TEST_APP_OVERRIDDEN'];
-      delete process.env['E2E_APP_INHERIT_ENV'];
-      delete process.env['TEST_APP_PREFIX_ONE'];
-      delete process.env['TEST_APP_PREFIX_TWO'];
-    }
-  });
 });

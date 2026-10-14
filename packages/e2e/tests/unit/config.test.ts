@@ -215,7 +215,7 @@ describe('resolveConfig', () => {
     );
   });
 
-  it('validates inheritEnv as an array of non-empty strings', () => {
+  it('validates inheritEnv as an array of valid variable names or trailing-* patterns', () => {
     const url = 'http://localhost:3000';
     expect(() => resolveApp({ url, command: { executable: 'node', inheritEnv: 'FOO' } } as never)).toThrow(
       expect.objectContaining({ code: 'INVALID_CONFIG', message: 'target "web" app.command.inheritEnv must be an array of strings' }),
@@ -226,10 +226,32 @@ describe('resolveConfig', () => {
     expect(() => resolveApp({ url, command: { executable: 'node', inheritEnv: [''] } } as never)).toThrow(
       expect.objectContaining({ code: 'INVALID_CONFIG', message: 'target "web" app.command.inheritEnv[0] must be a non-empty string' }),
     );
+    // Bare '*' rejected for security
+    expect(() => resolveApp({ url, command: { executable: 'node', inheritEnv: ['*'] } } as never)).toThrow(
+      expect.objectContaining({ code: 'INVALID_CONFIG', message: 'target "web" app.command.inheritEnv[0] must be an environment variable name or trailing-* pattern, got "*"' }),
+    );
+    // Invalid patterns
+    for (const bad of ['FOO*BAR', 'FOO-BAR', '123_FOO', '*FOO', 'FOO**']) {
+      expect(() => resolveApp({ url, command: { executable: 'node', inheritEnv: [bad] } } as never)).toThrow(
+        expect.objectContaining({ code: 'INVALID_CONFIG', message: `target "web" app.command.inheritEnv[0] must be an environment variable name or trailing-* pattern, got "${bad}"` }),
+      );
+    }
     expect(commandOf({ url, command: { executable: 'node', inheritEnv: ['DATABASE_URL', 'STRIPE_*'] } } as never).command.inheritEnv).toEqual([
       'DATABASE_URL',
       'STRIPE_*',
     ]);
+  });
+
+  it('validates E2E_APP_INHERIT_ENV environment variable tokens', () => {
+    for (const bad of ['*', 'FOO*BAR,=', '123_FOO', 'VALID, BAD*THING']) {
+      expect(() => resolveConfig({ targets: TARGETS }, { projectRoot: ROOT, env: { E2E_APP_INHERIT_ENV: bad } })).toThrow(
+        expect.objectContaining({
+          code: 'INVALID_CONFIG',
+          message: expect.stringContaining('E2E_APP_INHERIT_ENV must be a comma-separated list of environment variable names or trailing-* patterns'),
+        }),
+      );
+    }
+    expect(() => resolveConfig({ targets: TARGETS }, { projectRoot: ROOT, env: { E2E_APP_INHERIT_ENV: 'DATABASE_URL, STRIPE_*' } })).not.toThrow();
   });
 
   it('takes only strings in a command\'s args and env, naming secrets.get() for a handle', () => {
@@ -267,7 +289,7 @@ describe('resolveConfig', () => {
       expect.objectContaining({ code: 'INVALID_CONFIG', message: 'target "web" app.command has unknown key "arg"; did you mean "args"?' }),
     );
     expect(() => resolveApp({ url, command: { executable: 'node', readyUrl: url } } as never)).toThrow(
-      /app\.command has unknown key "readyUrl"; expected one of executable, args, cwd, env, startupTimeout, shutdownTimeout, log, inheritEnv, reuseExisting$/,
+      /app\.command has unknown key "readyUrl"; expected one of executable, args, cwd, env, inheritEnv, startupTimeout, shutdownTimeout, log, reuseExisting$/,
     );
   });
 

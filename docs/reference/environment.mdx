@@ -89,6 +89,8 @@ the derived name is sent.
 
 What is sent and how to read it is on the [Telemetry](/telemetry) page.
 
+| `E2E_APP_INHERIT_ENV` | value | Host environment variable names or trailing-* patterns to pass through to app processes, comma-separated (e.g. `DATABASE_URL,STRIPE_*`). `command.env` values take precedence |
+
 ## Reporters
 
 `@e2e-dev/github` reads the variables GitHub Actions sets, when a run finishes:
@@ -120,9 +122,8 @@ What is sent and how to read it is on the [Telemetry](/telemetry) page.
 An app `command` receives `PATH`, `HOME`, `TMPDIR`, `TMP`,
 `TEMP`, `SystemRoot`, and `COMSPEC`, plus whatever `command.env` sets.
 In addition, `command.inheritEnv` in config and the `E2E_APP_INHERIT_ENV`
-environment variable (comma-separated list of variable names or trailing `*`
-patterns, such as `DATABASE_URL,STRIPE_*`) pass matched host environment
-variables through to the app process without listing them in the committed config.
-`command.env` takes precedence over inherited variables.
+environment variable pass matched host environment variables through to the app
+process without listing them in the committed config. `command.env` takes
+precedence over inherited variables.
 `APP_URL` is read by the scaffolded config module, not the runner; pass it
 through `command.env` if the dev server needs it too.

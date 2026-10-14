@@ -12,7 +12,7 @@ import { isRecordingMode, legacyTraceSpelling, RECORDING_MODES, type RecordingKi
 import { BUILTIN_REPORTER_LIST, BUILTIN_REPORTERS, isBuiltinReporter } from '../report/builtin.ts';
 import { isStepExecutor } from '../agent/executor.ts';
 import { compileGlob, compileGlobList, literalPrefix } from '../internal/globs.ts';
-import { isRecord } from './command.ts';
+import { isRecord, isValidInheritPattern } from './command.ts';
 import { boundedInt, describeValue, positiveInt } from './validate.ts';
 import type {
   ArtifactStore,
@@ -276,6 +276,19 @@ export function resolveConfig(
   const failOnSkippedFailure = raw.failOnSkippedFailure === undefined ? false : raw.failOnSkippedFailure;
   if (typeof failOnSkippedFailure !== 'boolean') {
     throw new ConfigurationError('INVALID_CONFIG', 'failOnSkippedFailure must be a boolean');
+  }
+
+  const inheritEnvVar = env['E2E_APP_INHERIT_ENV'];
+  if (inheritEnvVar !== undefined && inheritEnvVar.trim() !== '') {
+    for (const rawToken of inheritEnvVar.split(',')) {
+      const pattern = rawToken.trim();
+      if (pattern.length === 0 || !isValidInheritPattern(pattern)) {
+        throw new ConfigurationError(
+          'INVALID_CONFIG',
+          `E2E_APP_INHERIT_ENV must be a comma-separated list of environment variable names or trailing-* patterns, got invalid token ${JSON.stringify(rawToken)}`,
+        );
+      }
+    }
   }
 
   const artifactStore = resolveArtifactStore(raw);

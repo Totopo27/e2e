@@ -25,10 +25,10 @@ const COMMAND_KEYS: readonly string[] = Object.keys({
   args: true,
   cwd: true,
   env: true,
+  inheritEnv: true,
   startupTimeout: true,
   shutdownTimeout: true,
   log: true,
-  inheritEnv: true,
   reuseExisting: true,
 } satisfies Record<keyof CommandConfig, true>);
 
@@ -54,19 +54,31 @@ function commandString(value: unknown, label: string): string {
 }
 
 /**
+ * Valid variable name or trailing-* pattern:
+ * an identifier name optionally followed by an asterisk, e.g. FOO or FOO_*.
+ * Bare '*' is rejected for security.
+ */
+const INHERIT_ENV_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*\*?$/;
+
+/** Returns true if a pattern is a valid variable name or trailing-* pattern. */
+export function isValidInheritPattern(pattern: string): boolean {
+  return INHERIT_ENV_PATTERN.test(pattern);
+}
+
+/**
  * Checks the shape of one command and returns a frozen copy: only the keys a
  * command takes, a non-empty executable, string args and env values, when
- * set positive integer timeouts, a non-empty `log`, and a boolean
- * `reuseExisting`. A misspelled key would otherwise be dropped without a
- * word; a NaN or infinite budget would make the readiness loop spin without
- * a deadline. An `env` entry whose value is `undefined` is dropped, as
- * `spawn` drops it: `env: { KEY: process.env.KEY }` with the variable unset
- * starts the process without it.
+ * set positive integer timeouts, a non-empty `log`, valid `inheritEnv`
+ * patterns, and a boolean `reuseExisting`. A misspelled key would otherwise
+ * be dropped without a word; a NaN or infinite budget would make the
+ * readiness loop spin without a deadline. An `env` entry whose value is
+ * `undefined` is dropped, as `spawn` drops it: `env: { KEY: process.env.KEY }`
+ * with the variable unset starts the process without it.
  */
 export function normalizeCommand(command: CommandConfig, label: string): CommandConfig {
   if (!isRecord(command)) throw new ConfigurationError('INVALID_CONFIG', `${label} must be an object`);
   rejectUnknownKeys(label, command, COMMAND_KEYS);
-  const { executable, args, cwd, env, startupTimeout, shutdownTimeout, log, inheritEnv, reuseExisting } = command;
+  const { executable, args, cwd, env, inheritEnv, startupTimeout, shutdownTimeout, log, reuseExisting } = command;
   if (typeof executable !== 'string' || executable.trim().length === 0) {
     throw new ConfigurationError('INVALID_CONFIG', `${label}.executable is required`);
   }
@@ -80,6 +92,12 @@ export function normalizeCommand(command: CommandConfig, label: string): Command
   const inheritedPatterns = inheritEnv?.map((pattern: unknown, index) => {
     if (typeof pattern !== 'string' || pattern.trim() === '') {
       throw new ConfigurationError('INVALID_CONFIG', `${label}.inheritEnv[${index}] must be a non-empty string`);
+    }
+    if (!isValidInheritPattern(pattern)) {
+      throw new ConfigurationError(
+        'INVALID_CONFIG',
+        `${label}.inheritEnv[${index}] must be an environment variable name or trailing-* pattern, got ${JSON.stringify(pattern)}`,
+      );
     }
     return pattern;
   });
@@ -107,10 +125,10 @@ export function normalizeCommand(command: CommandConfig, label: string): Command
       args: strings === undefined ? undefined : Object.freeze(strings),
       cwd,
       env: variables === undefined ? undefined : Object.freeze(Object.fromEntries(variables)),
+      inheritEnv: inheritedPatterns === undefined ? undefined : Object.freeze(inheritedPatterns),
       startupTimeout,
       shutdownTimeout,
       log,
-      inheritEnv: inheritedPatterns === undefined ? undefined : Object.freeze(inheritedPatterns),
       reuseExisting,
     }),
   );
