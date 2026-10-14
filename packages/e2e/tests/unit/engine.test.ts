@@ -211,15 +211,6 @@ describe('defineEngine', () => {
     }
   });
 
-  it('copies a declared readLatency bound and rejects one that is not a non-negative safe integer', () => {
-    expect(defineEngine(observingEngine({ readLatency: 1_500 })).readLatency).toBe(1_500);
-    expect(defineEngine(observingEngine({ readLatency: 0 })).readLatency).toBe(0);
-    expect(defineEngine(observingEngine()).readLatency).toBeUndefined();
-    for (const readLatency of [-1, 1.5, Number.NaN, '1500' as never]) {
-      expect(() => defineEngine(observingEngine({ readLatency }))).toThrow(/readLatency must be a non-negative safe integer/);
-    }
-  });
-
   it('requires a version: provenance and the trace cache key depend on it', () => {
     expect(() => defineEngine({ ...observingEngine(), version: '' })).toThrow(/version/);
     expect(() =>

@@ -75,7 +75,6 @@ import {
   type Rect,
   type Point,
   InputBudget,
-  ReadBudget,
 } from './support.ts';
 
 /** Hinge poses `device.fold` accepts: `closed` lights the outer display, `half-open` and `open` the inner one. */
@@ -471,11 +470,6 @@ export class AgentDeviceSurface {
     return new InputBudget(label, timeoutMs, (pending) => this.track(pending));
   }
 
-  /** The budget one read runs under; its device commands stay in flight until they settle. */
-  readBudget(label: string, timeoutMs: number): ReadBudget {
-    return new ReadBudget(label, timeoutMs, (pending) => this.track(pending));
-  }
-
   /** Registers one device command as in flight until it settles. */
   private track<T>(pending: Promise<T>): Promise<T> {
     this.inflight.add(pending);
@@ -850,7 +844,7 @@ export class AgentDeviceSurface {
     return installed;
   }
 
-  private async snapshot(signal: AbortSignal, interactiveOnly: boolean, budget?: ReadBudget): Promise<RawSnapshot> {
+  private async snapshot(signal: AbortSignal, interactiveOnly: boolean, budget?: InputBudget): Promise<RawSnapshot> {
     let last: RawSnapshot = {};
     for (const backoffMs of SPARSE_RETRY_BACKOFF_MS) {
       if (backoffMs > 0) {
@@ -859,7 +853,7 @@ export class AgentDeviceSurface {
       }
       budget?.check();
       if (signal.aborted) throw new EngineError('CANCELLED', 'snapshot cancelled', { retryable: false });
-      last = await this.capture(signal, interactiveOnly);
+      last = await (budget ? budget.read(() => this.capture(signal, interactiveOnly)) : this.capture(signal, interactiveOnly));
       if (last.appBundleId !== undefined || last.appName !== undefined) {
         this.appIdentity = last.appBundleId ?? last.appName;
       }
@@ -890,10 +884,9 @@ export class AgentDeviceSurface {
    * anything is open is an empty screen rather than a fault: the model's next
    * move is the open tool, and failing the step would take that move away.
    */
-  private async snapshotOrEmpty(operation: OperationContext, interactiveOnly: boolean): Promise<RawSnapshot> {
-    const budget = this.readBudget('snapshot', operation.timeoutMs);
+  private async snapshotOrEmpty(operation: OperationContext, interactiveOnly: boolean, budget?: InputBudget): Promise<RawSnapshot> {
     try {
-      return await budget.send(() => this.snapshot(operation.signal, interactiveOnly, budget));
+      return await this.snapshot(operation.signal, interactiveOnly, budget);
     } catch (cause) {
       if (!this.managesApp && cause instanceof EngineError && cause.code === 'INVALID_STATE') return { nodes: [] };
       throw cause;
@@ -920,10 +913,10 @@ export class AgentDeviceSurface {
    * the harness measures every rect and point against the viewport, so an
    * invented one would misplace every tap.
    */
-  private async viewportFor(projected: ProjectedSnapshot, signal: AbortSignal, timeoutMs?: number): Promise<ViewportSize> {
+  private async viewportFor(projected: ProjectedSnapshot, signal: AbortSignal, budget?: InputBudget): Promise<ViewportSize> {
     const known = projected.viewport ?? this.knownViewport;
     if (known !== undefined) return known;
-    const probed = await this.probeViewport(signal, timeoutMs);
+    const probed = await this.probeViewport(signal, budget);
     if (probed === undefined) {
       throw new EngineError(
         'ENGINE_FAILURE',
@@ -936,18 +929,18 @@ export class AgentDeviceSurface {
   }
 
   /** The device's logical screen size as its screenshot reports it; undefined when it reports none. */
-  private async probeViewport(signal: AbortSignal, timeoutMs?: number): Promise<ViewportSize | undefined> {
-    const result = await this.captureScreenshot(signal, async (shot) => shot, {}, timeoutMs);
+  private async probeViewport(signal: AbortSignal, budget?: InputBudget): Promise<ViewportSize | undefined> {
+    const result = await this.captureScreenshot(signal, async (shot) => shot, {}, budget);
     return logicalScreenSize(result);
   }
 
-  async observe(operation: OperationContext, options?: EngineObserveOptions): Promise<EngineSnapshot> {
-    const raw = await this.snapshotOrEmpty(operation, this.options.snapshot === 'interactive');
+  async observe(operation: OperationContext, options?: EngineObserveOptions, budget?: InputBudget): Promise<EngineSnapshot> {
+    const raw = await this.snapshotOrEmpty(operation, this.options.snapshot === 'interactive', budget);
     const projected = this.project(raw);
     this.generation = new Map(projected.index.map((entry) => [entry.id, this.bind(entry, projected.index)]));
-    const viewport = await this.viewportFor(projected, operation.signal, operation.timeoutMs);
+    const viewport = await this.viewportFor(projected, operation.signal, budget);
     const location = screenLocation(raw.appBundleId ?? raw.appName ?? this.appIdentity, screenTitle(projected));
-    const capture = options?.pixels === true ? await this.capturePixels(operation, projected, viewport, { normalizeStatusBar: options.comparable === true }) : undefined;
+    const capture = options?.pixels === true ? await this.capturePixels(operation, projected, viewport, { normalizeStatusBar: options.comparable === true }, budget) : undefined;
     return {
       root: screenRoot(projected.roots, viewport),
       viewport,
@@ -958,8 +951,8 @@ export class AgentDeviceSurface {
   }
 
   /** Retains only action bindings for matches, independently of the observation generation. */
-  async locate(expression: LocatorExpression, operation: OperationContext): Promise<readonly SemanticNode[]> {
-    const raw = await this.snapshotOrEmpty(operation, false);
+  async locate(expression: LocatorExpression, operation: OperationContext, budget?: InputBudget): Promise<readonly SemanticNode[]> {
+    const raw = await this.snapshotOrEmpty(operation, false, budget);
     const projected = this.project(raw);
     this.traceScreen(raw, projected);
     const matches = resolveExpression(expression, projected.index, this.options.platform);
@@ -1076,7 +1069,7 @@ export class AgentDeviceSurface {
    * mid-flight would send the action where the control was: below the
    * screen, for a modal rising from the bottom.
    */
-  private async settled(entry: NodeBinding, operation: OperationContext): Promise<NodeBinding> {
+  private async settled(entry: NodeBinding, operation: OperationContext, budget?: InputBudget): Promise<NodeBinding> {
     const since = Date.now() - this.lastActionAt;
     const remaining = this.transitionMs - since;
     if (remaining <= 0) return entry;
@@ -1091,12 +1084,12 @@ export class AgentDeviceSurface {
     if (operation.signal.aborted) {
       throw new EngineError('CANCELLED', 'transition wait cancelled', { retryable: false });
     }
-    return this.relocated(entry, operation);
+    return this.relocated(entry, operation, budget);
   }
 
   /** The same control in a fresh snapshot; the binding as it was when the snapshot no longer lists it. */
-  private async relocated(entry: NodeBinding, operation: OperationContext): Promise<NodeBinding> {
-    const projected = this.project(await this.snapshotOrEmpty(operation, false));
+  private async relocated(entry: NodeBinding, operation: OperationContext, budget?: InputBudget): Promise<NodeBinding> {
+    const projected = this.project(await this.snapshotOrEmpty(operation, false, budget));
     const found = this.refind(entry, projected.index);
     return found === undefined ? entry : this.bind(found, projected.index);
   }
@@ -1143,7 +1136,7 @@ export class AgentDeviceSurface {
     }
     const before = this.latestIndex;
     const run = async (): Promise<unknown> => {
-      const target = deterministic ? await this.settled(entry, operation) : entry;
+      const target = deterministic ? await this.settled(entry, operation, input) : entry;
       switch (action.kind) {
         case 'tap':
           return input.send(() => client.interactions.press({ ...this.actionTarget(target, true), ...settle }));
@@ -1335,10 +1328,10 @@ export class AgentDeviceSurface {
    * one-node tree has no keys and would pass for a dismissed keyboard.
    */
   private async dismissKeyboardByGesture(signal: AbortSignal, input: InputBudget | undefined): Promise<void> {
-    let raw = await this.dismissKeyboardTip(await this.snapshot(signal, false), signal, input);
+    let raw = await this.dismissKeyboardTip(await this.snapshot(signal, false, input), signal, input);
     if (!keyboardShowing(raw)) return;
     const projected = projectSnapshot(raw.nodes ?? [], { mintId: () => 'keyboard', viewport: raw.viewport });
-    const viewport = await this.viewportFor(projected, signal);
+    const viewport = await this.viewportFor(projected, signal, input);
     const centre = { x: viewport.width / 2, y: viewport.height / 2 };
     const drags: readonly Point[] = [
       { x: centre.x - viewport.width * KEYBOARD_DRAG_RATIO, y: centre.y },
@@ -1346,7 +1339,7 @@ export class AgentDeviceSurface {
     ];
     for (const to of drags) {
       await this.command('keyboard.dismiss', (client) => sendInput(input, () => client.interactions.swipe({ from: centre, to })), signal);
-      raw = await this.snapshot(signal, false);
+      raw = await this.snapshot(signal, false, input);
       if (!keyboardShowing(raw)) return;
     }
     throw new EngineError(
@@ -1370,7 +1363,7 @@ export class AgentDeviceSurface {
     const button = nodes.find((node) => node.label === 'Continue' && node.rect !== undefined && node.rect.y > tipTop);
     if (button?.rect === undefined) return raw;
     await this.command('keyboard.dismiss', (client) => sendInput(input, () => client.interactions.press(centreOf(button.rect!))), signal);
-    return await this.snapshot(signal, false);
+    return await this.snapshot(signal, false, input);
   }
 
   async back(operation: OperationContext, input: InputBudget): Promise<void> {
@@ -1432,21 +1425,21 @@ export class AgentDeviceSurface {
    * bounds cannot be masked, and an image that cannot be redacted is not
    * written at all.
    */
-  async screenshot(label: string | undefined, operation: OperationContext): Promise<string> {
+  async screenshot(label: string | undefined, operation: OperationContext, budget?: InputBudget): Promise<string> {
     const attempt = this.attempt;
     if (attempt === undefined) throw invalidState('screenshot outside an attempt');
-    const masked = await this.maskedScreenshot(operation.signal, operation.timeoutMs);
+    const masked = await this.maskedScreenshot(operation.signal, budget);
     attempt.screenshots += 1;
     const name = `${String(attempt.screenshots).padStart(3, '0')}-${sanitizeFilename(label ?? 'screenshot')}.png`;
-    const relative = path.join('screenshots', name);
+    const relative = path.posix.join('screenshots', name);
     mkdirSync(path.join(attempt.artifactsDir, 'screenshots'), { recursive: true });
-    writeFileSync(path.join(attempt.artifactsDir, relative), masked.data);
+    writeFileSync(path.join(attempt.artifactsDir, 'screenshots', name), masked.data);
     return relative;
   }
 
   /** Raw device pixels; cleanup follows the capture even when its caller abandons it. */
-  private rawScreenshot(signal?: AbortSignal, capture: ScreenshotCapture = {}, timeoutMs?: number): Promise<Uint8Array> {
-    return this.captureScreenshot(signal, async (shot, file) => new Uint8Array(readFileSync(shot.path ?? file)), capture, timeoutMs);
+  private rawScreenshot(signal?: AbortSignal, capture: ScreenshotCapture = {}, budget?: InputBudget): Promise<Uint8Array> {
+    return this.captureScreenshot(signal, async (shot, file) => new Uint8Array(readFileSync(shot.path ?? file)), capture, budget);
   }
 
   /**
@@ -1458,7 +1451,7 @@ export class AgentDeviceSurface {
     signal: AbortSignal | undefined,
     read: (shot: RawScreenshotResult, file: string) => Promise<T>,
     capture: ScreenshotCapture = {},
-    timeoutMs?: number,
+    budget?: InputBudget,
   ): Promise<T> {
     const run = () =>
       this.command('screenshot', async (client) => {
@@ -1470,9 +1463,8 @@ export class AgentDeviceSurface {
           rmSync(directory, { recursive: true, force: true });
         }
       }, signal);
-    if (timeoutMs === undefined) return run();
-    const budget = this.readBudget('screenshot', timeoutMs);
-    return budget.send(run);
+    if (budget === undefined) return run();
+    return budget.read(run);
   }
 
   /**
@@ -1481,16 +1473,16 @@ export class AgentDeviceSurface {
    * throws when a secure field cannot be covered, because an image that may
    * hold a credential must not leave the engine.
    */
-  private async maskedScreenshot(signal?: AbortSignal, timeoutMs = 30_000): Promise<{ data: Uint8Array; masked: number }> {
+  private async maskedScreenshot(signal?: AbortSignal, budget?: InputBudget): Promise<{ data: Uint8Array; masked: number }> {
     const operation: OperationContext = {
       signal: signal ?? new AbortController().signal,
-      timeoutMs,
+      timeoutMs: 30_000,
       runId: '',
       attemptId: '',
       origin: 'test',
     };
-    const projected = this.project(await this.snapshotOrEmpty(operation, false));
-    const data = await this.rawScreenshot(signal, {}, timeoutMs);
+    const projected = this.project(await this.snapshotOrEmpty(operation, false, budget));
+    const data = await this.rawScreenshot(signal, {}, budget);
     const masked = redactSecure(data, projected, projected.viewport ?? this.knownViewport);
     if (masked === undefined) {
       throw new EngineError('ENGINE_FAILURE', 'a secure field on screen could not be masked; screenshot withheld', {
@@ -1510,10 +1502,11 @@ export class AgentDeviceSurface {
     projected: ProjectedSnapshot,
     viewport: ViewportSize,
     capture: ScreenshotCapture,
+    budget?: InputBudget,
   ): Promise<{ pixels: ObservationPixels; masked: number } | undefined> {
     let raw: Uint8Array;
     try {
-      raw = await this.rawScreenshot(operation.signal, capture, operation.timeoutMs);
+      raw = await this.rawScreenshot(operation.signal, capture, budget);
     } catch (cause) {
       if (cause instanceof EngineError && cause.code === 'OPERATION_TIMEOUT') throw cause;
       return undefined;

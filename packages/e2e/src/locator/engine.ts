@@ -94,6 +94,10 @@ export class LocatorEngine {
     return this.options.budget.signal;
   }
 
+  get budget(): AttemptBudget {
+    return this.options.budget;
+  }
+
   get assertionTimeout(): number {
     return this.options.assertionTimeout;
   }
@@ -122,10 +126,10 @@ export class LocatorEngine {
   }
 
   /** An operation context bounded by a deadline a caller shares across steps, such as the swipes of one scroll. */
-  operationWithin(deadline: Deadline): OperationContext {
+  operationWithin(deadline: Deadline, timeoutMs?: number): OperationContext {
     return {
       signal: this.signal,
-      timeoutMs: Math.max(1, deadline.remaining()),
+      timeoutMs: timeoutMs ?? Math.max(1, deadline.remaining()),
       runId: this.options.runId,
       attemptId: this.options.attemptId,
       origin: 'test',
@@ -181,15 +185,16 @@ export class LocatorEngine {
     expression: LocatorExpression,
     deadline: Deadline,
     missingFrame: MissingFrame = 'wait',
+    timeoutMs?: number,
   ): Promise<readonly NodeRef[]> {
     let retried: unknown;
     for (;;) {
       const startedWithMs = deadline.remaining();
       try {
-        return await this.session.locate(expression, this.operationWithin(deadline));
+        return await this.session.locate(expression, this.operationWithin(deadline, timeoutMs));
       } catch (cause) {
         // A retry the deadline cut off saw nothing new: the wait ends on the failure it was retrying.
-        if (retried !== undefined && cutOffAtDeadline(cause, startedWithMs, this.session.readLatency)) throw translateLocatorError(retried, expression);
+        if (retried !== undefined && cutOffAtDeadline(cause, startedWithMs)) throw translateLocatorError(retried, expression);
         const engineError = asEngineError(cause);
         if (engineError?.retryable === true) {
           if (missingFrame === 'empty' && engineError.code === 'FRAME_NOT_FOUND') return [];
@@ -223,14 +228,18 @@ export class LocatorEngine {
         ...(cause === undefined ? {} : { cause }),
       });
     let sampled = false;
+    let latency = 0;
     for (let rounds = 1; ; rounds += 1) {
       const startedWithMs = deadline.remaining();
+      const readTimeout = Math.min(this.options.budget.deadline.remaining(), startedWithMs + latency);
       let refs: readonly NodeRef[];
+      const readStart = Date.now();
       try {
-        refs = await this.resolveOnce(expression, deadline);
+        refs = await this.resolveOnce(expression, deadline, 'wait', readTimeout);
+        latency = Math.max(latency, Date.now() - readStart);
       } catch (cause) {
         // A resolve the deadline cut off, after one that matched nothing, is the wait running out.
-        if (sampled && cutOffAtDeadline(cause, startedWithMs, this.session.readLatency)) throw notFound(cause);
+        if (sampled && cutOffAtDeadline(cause, startedWithMs, latency)) throw notFound(cause);
         throw cause;
       }
       sampled = true;
@@ -330,8 +339,9 @@ export class LocatorEngine {
     expression: LocatorExpression,
     deadline: Deadline,
     missingFrame: MissingFrame = 'wait',
+    timeoutMs?: number,
   ): Promise<{ node: SemanticNode | null; count: number }> {
-    return this.readOne(expression, deadline, missingFrame);
+    return this.readOne(expression, deadline, missingFrame, timeoutMs);
   }
 
   /**
@@ -348,11 +358,12 @@ export class LocatorEngine {
     expression: LocatorExpression,
     deadline: Deadline,
     missingFrame: MissingFrame,
+    timeoutMs?: number,
   ): Promise<{ node: SemanticNode | null; count: number }> {
-    const ref = assertSingle(await this.resolveOnce(expression, deadline, missingFrame), expression);
+    const ref = assertSingle(await this.resolveOnce(expression, deadline, missingFrame, timeoutMs), expression);
     if (ref === null) return { node: null, count: 0 };
     try {
-      const node = await this.session.read(ref, this.operationWithin(deadline));
+      const node = await this.session.read(ref, this.operationWithin(deadline, timeoutMs));
       return { node, count: 1 };
     } catch (cause) {
       if (asEngineError(cause)?.code === 'NODE_STALE') {
@@ -408,13 +419,17 @@ export class LocatorEngine {
         ...(cause === undefined ? {} : { cause }),
       });
     let sampled = false;
+    let latency = 0;
     for (;;) {
       const startedWithMs = deadline.remaining();
+      const readTimeout = Math.min(this.options.budget.deadline.remaining(), startedWithMs + latency);
       let node: SemanticNode | null;
+      const readStart = Date.now();
       try {
-        ({ node } = await this.tryRead(expression, deadline));
+        ({ node } = await this.tryRead(expression, deadline, 'wait', readTimeout));
+        latency = Math.max(latency, Date.now() - readStart);
       } catch (cause) {
-        if (sampled && cutOffAtDeadline(cause, startedWithMs, this.session.readLatency)) throw notVisible(cause);
+        if (sampled && cutOffAtDeadline(cause, startedWithMs, latency)) throw notVisible(cause);
         throw cause;
       }
       sampled = true;

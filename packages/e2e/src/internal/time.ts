@@ -89,8 +89,6 @@ export interface PollConditionOptions {
   readonly deadline: Deadline;
   readonly signal: AbortSignal;
   readonly negated: boolean;
-  /** Expected latency in ms for a single read, if declared by the engine. */
-  readonly readLatency?: number;
   /**
    * Evaluates the positive condition once, every read bounded by
    * `deadline`: a read on a longer budget outlasts the poll. Returns
@@ -116,7 +114,7 @@ export interface PollConditionOptions {
  * `cutOffAtDeadline`) after an earlier one completed saw nothing: the poll
  * ends there. A negation then passes if it has held long enough by the
  * time the read is cut off: the read left less than one poll tick (or the
- * declared read latency) unseen, no more than the gap between any two reads,
+ * measured read latency) unseen, no more than the gap between any two reads,
  * so a short budget still passes at its deadline on what it saw.
  */
 export async function pollCondition(options: PollConditionOptions): Promise<void> {
@@ -127,14 +125,17 @@ export async function pollCondition(options: PollConditionOptions): Promise<void
   let holdingSince: number | undefined;
   const holds = (now: number): boolean => holdingSince !== undefined && now - holdingSince >= grace;
   let sampled = false;
+  let latency = 0;
   for (;;) {
     const startedWithMs = deadline.remaining(readAt);
     let value: boolean | undefined;
+    const evaluateStart = Date.now();
     try {
       value = await options.evaluate();
       sampled = true;
+      latency = Math.max(latency, Date.now() - evaluateStart);
     } catch (cause) {
-      if (!sampled || !cutOffAtDeadline(cause, startedWithMs, options.readLatency)) throw cause;
+      if (!sampled || !cutOffAtDeadline(cause, startedWithMs, latency)) throw cause;
       if (negated && holds(Math.min(Date.now(), deadline.endsAt))) return;
       throw await options.onTimeout(cause);
     }

@@ -274,13 +274,17 @@ class ScreenImpl implements Screen {
           ...(cause === undefined ? {} : { cause }),
         });
       let sampled = false;
+      let latency = 0;
       for (;;) {
         const startedWithMs = deadline.remaining();
+        const readTimeout = Math.min(engine.budget.deadline.remaining(), startedWithMs + latency);
         let node: SemanticNode | null;
+        const readStart = Date.now();
         try {
-          ({ node } = await engine.tryRead(internals.expression, deadline));
+          ({ node } = await engine.tryRead(internals.expression, deadline, 'wait', readTimeout));
+          latency = Math.max(latency, Date.now() - readStart);
         } catch (cause) {
-          if (sampled && cutOffAtDeadline(cause, startedWithMs, engine.session.readLatency)) throw notVisible(cause);
+          if (sampled && cutOffAtDeadline(cause, startedWithMs, latency)) throw notVisible(cause);
           throw cause;
         }
         sampled = true;
@@ -610,7 +614,6 @@ class LocatorImpl extends ScreenImpl implements Locator {
           deadline,
           signal: engine.signal,
           negated: false,
-          ...(engine.session.readLatency === undefined ? {} : { readLatency: engine.session.readLatency }),
           evaluate: async () => {
             const { node } = await engine.tryRead(this.expression, deadline, ABSENCE_STATES.has(state) ? 'empty' : 'wait');
             samples.add(node === null ? 'absent' : isNodeVisible(node) ? 'visible' : 'hidden');

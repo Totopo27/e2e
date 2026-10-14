@@ -961,6 +961,43 @@ describe('observation', () => {
     }
   });
 
+  it('shares one budget across observe steps so screenshot cannot take a fresh budget', async () => {
+    const h = harness();
+    await openAttempt(h);
+    vi.useFakeTimers();
+    try {
+      // Snapshot takes 1,500ms
+      h.fake.respond('capture.snapshot', () => new Promise((resolve) => setTimeout(() => resolve(SETTINGS_SNAPSHOT), 1_500)));
+      // Screenshot hangs
+      h.fake.respond('capture.screenshot', () => new Promise(() => undefined));
+      const obs = h.engine.observe!({ ...operation(), timeoutMs: 2_000 }, { pixels: true });
+      const assertion = expect(obs).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+      // Total operation budget is 2,000ms. At 2,000ms (1,500ms snapshot + 500ms screenshot), it must time out.
+      await vi.advanceTimersByTimeAsync(2_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds keyboard dismiss snapshots by the operation budget', async () => {
+    const h = harness();
+    await openAttempt(h);
+    vi.useFakeTimers();
+    try {
+      h.fake.respond('command.keyboard', () => {
+        throw new AppError('UNSUPPORTED_OPERATION', 'Unable to dismiss the iOS keyboard: the keyboard exposes no dismiss key');
+      });
+      h.fake.respond('capture.snapshot', () => new Promise((resolve) => setTimeout(() => resolve(SETTINGS_SNAPSHOT), 5_000)));
+      const dismiss = h.engine.keyboard!.dismiss!({ ...operation(), timeoutMs: 1_000 });
+      const assertion = expect(dismiss).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancels a snapshot when the operation aborts', async () => {
     const h = harness();
     h.fake.respond('capture.snapshot', () => new Promise(() => undefined));

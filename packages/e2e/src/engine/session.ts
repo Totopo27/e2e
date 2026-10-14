@@ -323,7 +323,6 @@ export function createEngineSession(options: EngineSessionOptions): TargetSessio
     actions,
     pointerActions,
     tapModifiers,
-    ...(engine?.readLatency === undefined ? {} : { readLatency: engine.readLatency }),
     app,
     artifacts,
     appLog: createAppLogRoute(),

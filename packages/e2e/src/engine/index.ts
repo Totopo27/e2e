@@ -681,13 +681,6 @@ export interface Engine {
    */
   readonly workers?: number;
   /**
-   * Expected latency in ms for a single observation or locator snapshot read.
-   * A slow engine declares this so poll loops (like locator engine or pollCondition)
-   * classify a read timing out near the deadline as a normal deadline cut-off
-   * rather than a hung read.
-   */
-  readonly readLatency?: number;
-  /**
    * The `secrets.get()` handles the engine's options hold, such as a
    * basic-auth password. The config load checks each names a configured
    * secret (`INVALID_CONFIG` otherwise), and only these resolve through

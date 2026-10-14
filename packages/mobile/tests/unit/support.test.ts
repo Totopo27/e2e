@@ -42,6 +42,28 @@ describe('support helpers', () => {
         message: expect.stringMatching(/^longPress holds for 3000 ms, but only 2000 ms of its timeout are left/),
       });
       expect(held).toBe(false);
+
+      // A read under budget succeeds, and one that hangs fails with OPERATION_TIMEOUT
+      const readBudget = new InputBudget('snapshot', 300, (pending) => pending);
+      const readSuccess = readBudget.read(() => Promise.resolve('data'));
+      await expect(readSuccess).resolves.toBe('data');
+
+      const hangingRead = new InputBudget('snapshot', 200, (pending) => pending);
+      const hangingPromise = hangingRead.read(hung);
+      const hangingOutcome = expect(hangingPromise).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', message: 'snapshot timed out before the device answered' });
+      await vi.advanceTimersByTimeAsync(200);
+      await hangingOutcome;
+
+      // A read with no budget left fails immediately with OPERATION_TIMEOUT
+      const spentRead = new InputBudget('snapshot', 100, (pending) => pending);
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(spentRead.read(async () => 'late')).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', message: 'snapshot timed out before it was sent' });
+
+      // check() throws when budget has expired
+      const checkBudget = new InputBudget('observe', 100, (pending) => pending);
+      expect(() => checkBudget.check()).not.toThrow();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(() => checkBudget.check()).toThrowError(/observe timed out before it was sent/);
     } finally {
       vi.useRealTimers();
     }

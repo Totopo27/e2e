@@ -351,7 +351,7 @@ describe('pollCondition', () => {
     await expect(early).rejects.toBe(cut);
   });
 
-  it('honors readLatency in pollCondition: treats a last read within readLatency as cut off, not hung', async () => {
+  it('treats a last read in pollCondition within measured latency as cut off, not hung', async () => {
     vi.useFakeTimers();
     const cut = new EngineError('OPERATION_TIMEOUT', 'locate timed out', { retryable: false });
     const deadline = new Deadline(600);
@@ -360,11 +360,13 @@ describe('pollCondition', () => {
       deadline,
       signal: new AbortController().signal,
       negated: false,
-      readLatency: 1_500,
       evaluate: async () => {
         calls += 1;
-        if (calls === 1) return false;
-        // Started with ~500ms remaining, which is < readLatency (1500ms) but >= POLL_INTERVAL_MS (100ms)
+        if (calls === 1) {
+          await sleep(300);
+          return false;
+        }
+        // Started with ~200ms remaining, which is < measured latency (300ms) but >= POLL_INTERVAL_MS (100ms)
         throw cut;
       },
       onTimeout: () => new Error('poll timed out'),

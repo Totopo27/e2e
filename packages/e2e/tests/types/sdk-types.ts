@@ -145,7 +145,6 @@ engineSnapshot.treeUnavailable satisfies true | undefined;
 ({ targets: [{ engine, url: 'http://localhost:3000' }] }) satisfies E2EConfig;
 // @ts-expect-error an engine only drives the app: the target declares it
 ({ name: 'toy', version: '1.0.0', spiVersion: 1, app: { url: 'http://localhost:3000' } }) satisfies Engine;
-({ name: 'toy', version: '1.0.0', spiVersion: 1, readLatency: 2_000 }) satisfies Engine;
 ({ name: 'toy', version: '1.0.0', spiVersion: 1, validateApp: (app, { targetName }) => void [app.bundleId, targetName] }) satisfies Engine;
 // @ts-expect-error a target declares its app; there is no services list in this version
 ({ targets: [{ engine, app: { url: 'http://localhost:3000' }, services: [] }] }) satisfies E2EConfig;

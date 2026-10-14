@@ -17,9 +17,6 @@ import { AgentDeviceSurface, assertPermissions } from './surface.ts';
 
 const surfaces = new WeakMap<EngineHandle, AgentDeviceSurface>();
 
-/** Expected latency for a device snapshot read, granting slow reads past the deadline. */
-const MOBILE_READ_LATENCY_MS = 2_000;
-
 /** Assembles the manifest for one surface. Exported for tests that script the client. */
 export function buildEngine(surface: AgentDeviceSurface): EngineHandle {
   const handle = defineEngine({
@@ -27,7 +24,6 @@ export function buildEngine(surface: AgentDeviceSurface): EngineHandle {
     version: ownVersion(),
     spiVersion: 1,
     platform: surface.options.platform,
-    readLatency: MOBILE_READ_LATENCY_MS,
     ...(surface.pool.size === undefined ? {} : { workers: surface.pool.size }),
     prepare: (info) => surface.pool.prepare(info),
     finish: (info) => surface.pool.finish(info),
@@ -35,8 +31,8 @@ export function buildEngine(surface: AgentDeviceSurface): EngineHandle {
     startAttempt: (context) => surface.startAttempt(context),
     endAttempt: (context) => surface.endAttempt(context),
     dispose: (context) => surface.dispose(context),
-    observe: (operation, options) => surface.observe(operation, options),
-    locate: (expression, operation) => surface.locate(expression, operation),
+    observe: (operation, options) => surface.observe(operation, options, surface.inputBudget('observe', operation.timeoutMs)),
+    locate: (expression, operation) => surface.locate(expression, operation, surface.inputBudget('locate', operation.timeoutMs)),
     // The harness signal does not abort at an operation's budget, so each
     // input enforces its own; see InputBudget in support.ts.
     perform: (ref, action, operation) => surface.perform(ref, action, operation, surface.inputBudget(action.kind, operation.timeoutMs)),
@@ -58,7 +54,7 @@ export function buildEngine(surface: AgentDeviceSurface): EngineHandle {
       reset: (operation) => surface.reset(operation),
     },
     artifacts: {
-      screenshot: (label, operation) => surface.screenshot(label, operation),
+      screenshot: (label, operation) => surface.screenshot(label, operation, surface.inputBudget('screenshot', operation.timeoutMs)),
       startVideo: (operation) => surface.startVideo(operation),
       stopVideo: (operation) => surface.stopVideo(operation),
     },
