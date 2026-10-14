@@ -1502,7 +1502,8 @@ export class AgentDeviceSurface {
 
   /**
    * Viewport pixels for an observation. Best-effort: a screenshot that cannot
-   * be produced or redacted costs the observation its image, not the step.
+   * be produced or redacted costs the observation its image, not the step;
+   * timeouts propagate so an expired read budget fails the observation.
    */
   private async capturePixels(
     operation: OperationContext,
