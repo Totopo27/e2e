@@ -946,6 +946,21 @@ describe('observation', () => {
     }
   });
 
+  it('rethrows OPERATION_TIMEOUT from capturePixels during observe', async () => {
+    const h = harness();
+    await openAttempt(h);
+    vi.useFakeTimers();
+    try {
+      h.fake.respond('capture.screenshot', () => new Promise((resolve) => setTimeout(() => resolve({ path: '' }), 5_000)));
+      const obs = h.engine.observe!({ ...operation(), timeoutMs: 1_000 }, { pixels: true });
+      const assertion = expect(obs).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancels a snapshot when the operation aborts', async () => {
     const h = harness();
     h.fake.respond('capture.snapshot', () => new Promise(() => undefined));

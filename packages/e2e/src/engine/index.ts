@@ -682,9 +682,9 @@ export interface Engine {
   readonly workers?: number;
   /**
    * Expected latency in ms for a single observation or locator snapshot read.
-   * A slow engine (e.g. mobile iOS snapshot taking 1-2 s) declares this so
-   * poll loops (like locator engine or pollCondition) can grant the last read
-   * past the deadline instead of treating it as hung with budget to spare.
+   * A slow engine declares this so poll loops (like locator engine or pollCondition)
+   * classify a read timing out near the deadline as a normal deadline cut-off
+   * rather than a hung read.
    */
   readonly readLatency?: number;
   /**

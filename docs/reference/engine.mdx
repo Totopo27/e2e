@@ -26,6 +26,7 @@ Validation fails with `INVALID_CONFIG` for:
 - a spec that is not an object, or a missing or empty `name`;
 - a missing or empty `version`, or a `spiVersion` other than `1`;
 - an empty `platform`, or a `workers` that is not a positive safe integer;
+- a `readLatency` that is not a non-negative safe integer;
 - a hook (`observe`, `locate`, `perform`, `performAt`, `prepare`, `finish`,
   `init`, `startAttempt`, `settleAttempt`, `endAttempt`, `dispose`,
   `validateApp`) that is not a function;

@@ -1513,7 +1513,8 @@ export class AgentDeviceSurface {
     let raw: Uint8Array;
     try {
       raw = await this.rawScreenshot(operation.signal, capture, operation.timeoutMs);
-    } catch {
+    } catch (cause) {
+      if (cause instanceof EngineError && cause.code === 'OPERATION_TIMEOUT') throw cause;
       return undefined;
     }
     const redacted = redactSecure(raw, projected, viewport);
