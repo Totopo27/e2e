@@ -43,7 +43,7 @@ import {
   testIdQuery,
   textQuery,
 } from './expression.ts';
-import { cutOffAtDeadline, type Deadline, isOperationTimeout, POLL_INTERVAL_MS, pollCondition } from '../internal/time.ts';
+import { type Deadline, isOperationTimeout, POLL_INTERVAL_MS, pollCondition } from '../internal/time.ts';
 import { SampleHistory } from '../expect/samples.ts';
 import type { ScreenshotContext } from '../run/screenshots.ts';
 
@@ -273,18 +273,15 @@ class ScreenImpl implements Screen {
           details: locatorDetails(internals.expression, Date.now() - startedMs),
           ...(cause === undefined ? {} : { cause }),
         });
+      const reads = engine.reads(deadline);
       let sampled = false;
-      let latency = 0;
       for (;;) {
         const startedWithMs = deadline.remaining();
-        const readTimeout = Math.min(engine.budget.deadline.remaining(), startedWithMs + latency);
         let node: SemanticNode | null;
-        const readStart = Date.now();
         try {
-          ({ node } = await engine.tryRead(internals.expression, deadline, 'wait', readTimeout));
-          latency = Math.max(latency, Date.now() - readStart);
+          ({ node } = await engine.tryRead(internals.expression, reads));
         } catch (cause) {
-          if (sampled && cutOffAtDeadline(cause, startedWithMs, latency)) throw notVisible(cause);
+          if (sampled && reads.cutOff(cause, startedWithMs)) throw notVisible(cause);
           throw cause;
         }
         sampled = true;
@@ -611,10 +608,11 @@ class LocatorImpl extends ScreenImpl implements Locator {
       await samples.record(engine, () =>
         pollCondition({
           deadline,
+          reads: engine.reads(deadline),
           signal: engine.signal,
           negated: false,
-          evaluate: async () => {
-            const { node } = await engine.tryRead(this.expression, deadline, ABSENCE_STATES.has(state) ? 'empty' : 'wait');
+          evaluate: async (reads) => {
+            const { node } = await engine.tryRead(this.expression, reads, ABSENCE_STATES.has(state) ? 'empty' : 'wait');
             samples.add(node === null ? 'absent' : isNodeVisible(node) ? 'visible' : 'hidden');
             return inWaitForState(node, state);
           },

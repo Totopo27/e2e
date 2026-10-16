@@ -929,7 +929,7 @@ describe('observation', () => {
     }
   });
 
-  it('stops sparse retries when the read budget expires', async () => {
+  it('returns a sparse capture when the budget cannot fit a retry, instead of timing out', async () => {
     const h = harness();
     await openAttempt(h);
     vi.useFakeTimers();
@@ -943,8 +943,7 @@ describe('observation', () => {
         { kind: 'query', query: { kind: 'text', value: { kind: 'string', value: 'About', exact: true } } },
         { ...operation(), timeoutMs: 500 },
       );
-      const assertion = expect(read).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
-      // At 500ms, first backoff (1200ms) has not completed, budget expires
+      const assertion = expect(read).resolves.toEqual([]);
       await vi.advanceTimersByTimeAsync(1_500);
       await assertion;
       expect(snapshots).toBe(1);
@@ -988,21 +987,26 @@ describe('observation', () => {
     await openAttempt(h);
     vi.useFakeTimers();
     try {
-      // Snapshot takes 1,500ms
-      h.fake.respond('capture.snapshot', () => new Promise((resolve) => setTimeout(() => resolve(SETTINGS_SNAPSHOT), 1_500)));
-      // Screenshot hangs
-      h.fake.respond('capture.screenshot', () => new Promise(() => undefined));
+      // The snapshot carries its geometry, so the only screenshot is the observation's pixels.
+      h.fake.respond('capture.snapshot', () => new Promise((resolve) => setTimeout(() => resolve({ ...SETTINGS_SNAPSHOT, viewport: { width: 390, height: 844 } }), 1_500)));
+      let screenshots = 0;
+      h.fake.respond('capture.screenshot', () => {
+        screenshots += 1;
+        return new Promise(() => undefined);
+      });
+      const started = Date.now();
       const obs = h.engine.observe!({ ...operation(), timeoutMs: 2_000 }, { pixels: true });
       const assertion = expect(obs).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
-      // Total operation budget is 2,000ms. At 2,000ms (1,500ms snapshot + 500ms screenshot), it must time out.
       await vi.advanceTimersByTimeAsync(2_000);
       await assertion;
+      expect(screenshots).toBe(1);
+      expect(Date.now() - started).toBe(2_000);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('bounds keyboard dismiss snapshots by the operation budget', async () => {
+  it('bounds the snapshots of a keyboard dismissal by its budget, and reports one cut off after the drag as possibly committed', async () => {
     const h = harness();
     await openAttempt(h);
     vi.useFakeTimers();
@@ -1010,11 +1014,54 @@ describe('observation', () => {
       h.fake.respond('command.keyboard', () => {
         throw new AppError('UNSUPPORTED_OPERATION', 'Unable to dismiss the iOS keyboard: the keyboard exposes no dismiss key');
       });
-      h.fake.respond('capture.snapshot', () => new Promise((resolve) => setTimeout(() => resolve(SETTINGS_SNAPSHOT), 5_000)));
+      const keyboardUp = { ...SETTINGS_SNAPSHOT, viewport: { width: 390, height: 844 }, keyboard: { kind: 'visible', frame: { x: 0, y: 583, width: 390, height: 261 } } };
+      let snapshots = 0;
+      h.fake.respond('capture.snapshot', () => (snapshots++ === 0 ? keyboardUp : new Promise(() => undefined)));
       const dismiss = h.engine.keyboard!.dismiss!({ ...operation(), timeoutMs: 1_000 });
-      const assertion = expect(dismiss).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+      const assertion = expect(dismiss).rejects.toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED' });
       await vi.advanceTimersByTimeAsync(1_000);
       await assertion;
+      expect(h.fake.calls.filter((call) => call.method === 'interactions.swipe')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('finishes a slow read the budget covers: a poll grants its last read the time reads take', async () => {
+    const h = harness();
+    await openAttempt(h);
+    vi.useFakeTimers();
+    try {
+      h.fake.respond('capture.snapshot', () => new Promise((resolve) => setTimeout(() => resolve(SETTINGS_SNAPSHOT), 3_000)));
+      const about = { kind: 'query', query: { kind: 'text', value: { kind: 'string', value: 'About', exact: true } } } as const;
+      // The last read of a poll that has 500 ms left, after reads that took 3 s.
+      const read = h.engine.locate!(about, { ...operation(), timeoutMs: 3_500 });
+      const assertion = expect(read).resolves.toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('takes no second snapshot for a capture the budget abandoned', async () => {
+    const h = harness();
+    await openAttempt(h);
+    vi.useFakeTimers();
+    try {
+      let snapshots = 0;
+      const presentationFailure = () =>
+        new AppError('COMMAND_FAILED', 'regular iOS snapshot presentation requires a valid viewport', { reason: 'invalid-viewport' });
+      h.fake.respond('capture.snapshot', () => {
+        snapshots += 1;
+        return new Promise((_, reject) => setTimeout(() => reject(presentationFailure()), 1_500));
+      });
+      const about = { kind: 'query', query: { kind: 'text', value: { kind: 'string', value: 'About', exact: true } } } as const;
+      const read = h.engine.locate!(about, { ...operation(), timeoutMs: 1_000 });
+      const assertion = expect(read).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await assertion;
+      expect(snapshots).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -1096,10 +1143,10 @@ describe('a screen agent-device cannot read yet', () => {
     await openAttempt(h);
     vi.useFakeTimers();
     try {
-      h.fake.respond('capture.snapshot', () => new Promise((_, reject) => setTimeout(() => reject(insufficientContent()), 3_000)));
+      h.fake.respond('capture.snapshot', () => new Promise((_, reject) => setTimeout(() => reject(insufficientContent()), 600)));
       const located = h.engine.locate!(ABOUT, { ...operation(), timeoutMs: 1_000 });
       const settled = expect(located).rejects.toMatchObject({ code: 'ENGINE_FAILURE', message: expect.stringContaining('insufficient foreground app content') });
-      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.advanceTimersByTimeAsync(600);
       await settled;
     } finally {
       vi.useRealTimers();

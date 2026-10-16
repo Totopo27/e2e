@@ -225,9 +225,16 @@ export interface Engine {
 ```ts
 /** What every engine call carries: budget, ids, and who is acting. */
 export interface OperationContext {
-  /** Aborts with the attempt or when the operation budget is spent. */
+  /**
+   * Aborts when the attempt, or the hook running the call, ends. It does not
+   * abort at `timeoutMs`: bound each call by that budget yourself.
+   */
   readonly signal: AbortSignal;
-  /** Remaining operation budget when the call starts. */
+  /**
+   * Remaining operation budget when the call starts. A waiting call's last
+   * locate or read can get more than its deadline leaves: as long as the
+   * slowest one it has seen.
+   */
   readonly timeoutMs: number;
   /** The run id. */
   readonly runId: string;
@@ -986,8 +993,9 @@ export const RETRYABLE_ENGINE_ERROR_CODES: ReadonlySet<EngineErrorCode> = new Se
 | `INVALID_STATE` | `APP_NOT_OPEN` | no |
 | `ENGINE_FAILURE`, any non-`EngineError` | infrastructure `ENGINE_FAILURE` | no |
 
-An `OPERATION_TIMEOUT` on a locate or read that started with under 100 ms of
-a waiting call's deadline left, after one that completed, ends the wait
+An `OPERATION_TIMEOUT` on a locate or read that started with under 100 ms, or
+under its slowest completed locate or read, of a waiting call's deadline left,
+after one that completed, ends the wait
 instead: an action's or `waitFor`'s `LOCATOR_NOT_FOUND`, or an assertion's
 `ASSERTION_FAILED`, with the timeout as its cause. A negated assertion passes
 there if its negation had held long enough by the time the read was cut off, as

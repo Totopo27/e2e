@@ -68,15 +68,44 @@ export const MAX_TIMER_MS = 2 ** 31 - 1;
 export const POLL_INTERVAL_MS = 100;
 
 /**
- * Whether `cause` is a read a wait's deadline cut off: an operation timeout
- * of a read that started with less than one poll tick (or the engine's read
- * latency, whichever is larger) of the wait left, so it timed out because the
- * wait did, not because the app stopped answering. A read that started with
- * more and still timed out hung, and its timeout is the failure. Reads the
- * engine error a locator failure wraps as well as a bare one.
+ * The reads of one wait. Each engine read runs on the time left before the
+ * wait's deadline plus the longest read the wait has finished, capped by
+ * `cap` (the running phase's deadline), so a slow last read still finishes.
+ * Without a cap, reads end at the deadline.
  */
-export function cutOffAtDeadline(cause: unknown, startedWithMs: number, latencyMs = 0): boolean {
-  return startedWithMs < Math.max(POLL_INTERVAL_MS, latencyMs) && isOperationTimeout(cause);
+export class ReadWindow {
+  private slowestMs = 0;
+
+  constructor(
+    readonly deadline: Deadline,
+    private readonly cap: Deadline = deadline,
+  ) {}
+
+  /** The budget for an engine read starting now, never under 1 ms. */
+  timeoutMs(): number {
+    const now = Date.now();
+    return Math.max(1, Math.min(this.cap.remaining(now), this.deadline.remaining(now) + this.slowestMs));
+  }
+
+  /** Runs one engine read on `timeoutMs()`, timing it when it answers. */
+  async read<T>(call: (timeoutMs: number) => Promise<T>): Promise<T> {
+    const startedAt = Date.now();
+    const value = await call(this.timeoutMs());
+    this.slowestMs = Math.max(this.slowestMs, Date.now() - startedAt);
+    return value;
+  }
+
+  /**
+   * Whether `cause` is a read the deadline cut off: an operation timeout of a
+   * read that started with less than one poll tick, or the longest read this
+   * wait finished, of the deadline left, so it timed out because the wait
+   * did, not because the app stopped answering. A read that started with
+   * more and still timed out hung, and its timeout is the failure. Reads the
+   * engine error a locator failure wraps as well as a bare one.
+   */
+  cutOff(cause: unknown, startedWithMs: number): boolean {
+    return startedWithMs < Math.max(POLL_INTERVAL_MS, this.slowestMs) && isOperationTimeout(cause);
+  }
 }
 
 /** Whether `cause` is the engine's `OPERATION_TIMEOUT`, bare or wrapped by the locator failure it was translated into. */
@@ -90,15 +119,17 @@ export const NEGATION_GRACE_MS = 1000;
 
 export interface PollConditionOptions {
   readonly deadline: Deadline;
+  /** The window over `deadline` that `evaluate`'s reads run in; without one, reads end at `deadline`. */
+  readonly reads?: ReadWindow;
   readonly signal: AbortSignal;
   readonly negated: boolean;
   /**
-   * Evaluates the positive condition once, every read bounded by
-   * `deadline`: a read on a longer budget outlasts the poll. Returns
-   * undefined when the condition cannot be evaluated yet: the positive poll
-   * keeps waiting and the negation grace window resets.
+   * Evaluates the positive condition once, every read run through `reads`
+   * or bounded by `deadline`: a read on a longer budget outlasts the poll.
+   * Returns undefined when the condition cannot be evaluated yet: the
+   * positive poll keeps waiting and the negation grace window resets.
    */
-  evaluate(): Promise<boolean | undefined>;
+  evaluate(reads: ReadWindow): Promise<boolean | undefined>;
   /** Builds the poll's failure; `cause` is the read the deadline cut off, when one did. */
   onTimeout(cause?: unknown): Error | Promise<Error>;
 }
@@ -107,18 +138,18 @@ export interface PollConditionOptions {
  * Polls a condition until it holds (or, when negated, until its negation has
  * held continuously for the negation grace window), throwing the caller's
  * error at the deadline. No sleep runs past the deadline, so the last read
- * starts at it and never sees a state that arrived later.
+ * starts at it; a `reads` window with a cap lets it run past by the longest
+ * read the poll has finished.
  *
  * A negation holds from the moment the read that first saw it was issued, so
  * a slow read counts toward the window. A budget shorter than the window
  * still has to be satisfiable: the negation then only needs to hold for the
- * whole budget, and passes at the deadline on what it has seen, since a read
- * past the deadline has no budget left. A read the deadline cut off (see
- * `cutOffAtDeadline`) after an earlier one completed saw nothing: the poll
- * ends there. A negation then passes if it has held long enough by the
- * time the read is cut off: the read left less than one poll tick (or the
- * measured read latency) unseen, no more than the gap between any two reads,
- * so a short budget still passes at its deadline on what it saw.
+ * whole budget, and passes at the deadline on what it has seen. A read the
+ * deadline cut off (see `ReadWindow.cutOff`) after an earlier one completed
+ * saw nothing: the poll ends there. A negation then passes if it has held
+ * long enough by the time the read is cut off: the read left less than one
+ * poll tick, or one read's time, unseen, so a short budget still passes at
+ * its deadline on what it saw.
  */
 export async function pollCondition(options: PollConditionOptions): Promise<void> {
   const { deadline, negated } = options;
@@ -127,18 +158,16 @@ export async function pollCondition(options: PollConditionOptions): Promise<void
   let readAt = startedAt;
   let holdingSince: number | undefined;
   const holds = (now: number): boolean => holdingSince !== undefined && now - holdingSince >= grace;
+  const reads = options.reads ?? new ReadWindow(deadline);
   let sampled = false;
-  let latency = 0;
   for (;;) {
     const startedWithMs = deadline.remaining(readAt);
     let value: boolean | undefined;
-    const evaluateStart = Date.now();
     try {
-      value = await options.evaluate();
+      value = await options.evaluate(reads);
       sampled = true;
-      latency = Math.max(latency, Date.now() - evaluateStart);
     } catch (cause) {
-      if (!sampled || !cutOffAtDeadline(cause, startedWithMs, latency)) throw cause;
+      if (!sampled || !reads.cutOff(cause, startedWithMs)) throw cause;
       if (negated && holds(Math.min(Date.now(), deadline.endsAt))) return;
       throw await options.onTimeout(cause);
     }

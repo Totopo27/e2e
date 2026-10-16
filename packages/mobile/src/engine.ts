@@ -31,10 +31,10 @@ export function buildEngine(surface: AgentDeviceSurface): EngineHandle {
     startAttempt: (context) => surface.startAttempt(context),
     endAttempt: (context) => surface.endAttempt(context),
     dispose: (context) => surface.dispose(context),
+    // The harness signal does not abort at an operation's budget, so each
+    // operation enforces its own; see InputBudget in support.ts.
     observe: (operation, options) => surface.observe(operation, options, surface.inputBudget('observe', operation.timeoutMs)),
     locate: (expression, operation) => surface.locate(expression, operation, surface.inputBudget('locate', operation.timeoutMs)),
-    // The harness signal does not abort at an operation's budget, so each
-    // input enforces its own; see InputBudget in support.ts.
     perform: (ref, action, operation) => surface.perform(ref, action, operation, surface.inputBudget(action.kind, operation.timeoutMs)),
     actions: DEVICE_ACTIONS,
     performAt: (point, action, operation) => surface.performAt(point, action, operation, surface.inputBudget(action.kind, operation.timeoutMs)),

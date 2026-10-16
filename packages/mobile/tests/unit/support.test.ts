@@ -43,27 +43,34 @@ describe('support helpers', () => {
       });
       expect(held).toBe(false);
 
-      // A read under budget succeeds, and one that hangs fails with OPERATION_TIMEOUT
-      const readBudget = new InputBudget('snapshot', 300, (pending) => pending);
-      const readSuccess = readBudget.read(() => Promise.resolve('data'));
-      await expect(readSuccess).resolves.toBe('data');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-      const hangingRead = new InputBudget('snapshot', 200, (pending) => pending);
-      const hangingPromise = hangingRead.read(hung);
-      const hangingOutcome = expect(hangingPromise).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', message: 'snapshot timed out before the device answered' });
+  it('runs a read with what is left of its budget, and reports one cut off after an input as possibly committed', async () => {
+    const hung = () => new Promise<never>(() => undefined);
+    vi.useFakeTimers();
+    try {
+      await expect(new InputBudget('snapshot', 300, (pending) => pending).read(async () => 'tree')).resolves.toBe('tree');
+
+      const cut = new InputBudget('snapshot', 200, (pending) => pending).read(hung);
+      const timedOut = expect(cut).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', message: 'snapshot timed out before the device answered' });
       await vi.advanceTimersByTimeAsync(200);
-      await hangingOutcome;
+      await timedOut;
 
-      // A read with no budget left fails immediately with OPERATION_TIMEOUT
-      const spentRead = new InputBudget('snapshot', 100, (pending) => pending);
+      const spent = new InputBudget('snapshot', 100, (pending) => pending);
       await vi.advanceTimersByTimeAsync(100);
-      await expect(spentRead.read(async () => 'late')).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', message: 'snapshot timed out before it was sent' });
+      await expect(spent.read(async () => 'late')).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', message: 'snapshot timed out before it was sent' });
 
-      // check() throws when budget has expired
-      const checkBudget = new InputBudget('observe', 100, (pending) => pending);
-      expect(() => checkBudget.check()).not.toThrow();
-      await vi.advanceTimersByTimeAsync(100);
-      expect(() => checkBudget.check()).toThrowError(/observe timed out before it was sent/);
+      // After a swipe went out, a read that does not answer must not let a replay send the swipe again.
+      const dismissal = new InputBudget('keyboard dismiss', 300, (pending) => pending);
+      await dismissal.send(async () => undefined);
+      const after = dismissal.read(hung);
+      const committed = expect(after).rejects.toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED' });
+      await vi.advanceTimersByTimeAsync(300);
+      await committed;
+      await expect(dismissal.read(async () => 'late')).rejects.toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED' });
     } finally {
       vi.useRealTimers();
     }

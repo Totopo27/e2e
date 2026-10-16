@@ -280,6 +280,11 @@ function sendInput<T>(input: InputBudget | undefined, dispatch: () => Promise<T>
   return input === undefined ? dispatch() : input.send(dispatch);
 }
 
+/** Runs a device read under its operation's budget, or directly from a call that has none. */
+function readWithin<T>(budget: InputBudget | undefined, dispatch: () => Promise<T>): Promise<T> {
+  return budget === undefined ? dispatch() : budget.read(dispatch);
+}
+
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(done, ms);
@@ -474,7 +479,7 @@ export class AgentDeviceSurface {
     return result;
   }
 
-  /** The budget one input runs under; its device commands stay in flight until they settle. */
+  /** The budget one operation runs under; its device commands stay in flight until they settle. */
   inputBudget(label: string, timeoutMs: number): InputBudget {
     return new InputBudget(label, timeoutMs, (pending) => this.track(pending));
   }
@@ -862,14 +867,17 @@ export class AgentDeviceSurface {
 
   private async snapshot(signal: AbortSignal, interactiveOnly: boolean, budget?: InputBudget): Promise<RawSnapshot> {
     let last: RawSnapshot = {};
+    let captureMs = 0;
     for (const backoffMs of SPARSE_RETRY_BACKOFF_MS) {
       if (backoffMs > 0) {
-        budget?.check();
+        // A sparse capture is still the screen: a retry the budget cannot fit returns it instead of timing out.
+        if (budget !== undefined && budget.remainingMs() <= backoffMs + captureMs) return last;
         await sleep(backoffMs, signal);
       }
-      budget?.check();
       if (signal.aborted) throw new EngineError('CANCELLED', 'snapshot cancelled', { retryable: false });
-      last = await (budget ? budget.read(() => this.capture(signal, interactiveOnly)) : this.capture(signal, interactiveOnly));
+      const startedAt = Date.now();
+      last = await this.capture(signal, interactiveOnly, budget);
+      captureMs = Date.now() - startedAt;
       if (last.appBundleId !== undefined || last.appName !== undefined) {
         this.appIdentity = last.appBundleId ?? last.appName;
       }
@@ -882,11 +890,12 @@ export class AgentDeviceSurface {
    * One capture, taken again once when the iOS runner acquired the tree but
    * failed its own presentation check on it (a viewport it could not read, a
    * malformed graph). The check is per capture and a capture is a read, so
-   * the retry is safe; a second failure is the runner's and propagates.
+   * the retry is safe; a second failure is the runner's and propagates. Each
+   * capture runs under `budget`, so one the budget abandoned is not retried.
    */
-  private async capture(signal: AbortSignal, interactiveOnly: boolean): Promise<RawSnapshot> {
+  private async capture(signal: AbortSignal, interactiveOnly: boolean, budget?: InputBudget): Promise<RawSnapshot> {
     const take = (): Promise<RawSnapshot> =>
-      this.command('snapshot', (client) => client.capture.snapshot({ interactiveOnly }), signal);
+      readWithin(budget, () => this.command('snapshot', (client) => client.capture.snapshot({ interactiveOnly }), signal));
     try {
       return await take();
     } catch (cause) {
@@ -913,15 +922,17 @@ export class AgentDeviceSurface {
    * Snapshot for a locate; undefined for a screen agent-device could not read
    * yet (an app still on its splash). The harness polls a locate until its
    * deadline, so that screen matches nothing and the poll waits for it to
-   * render. A capture that leaves no budget for another poll fails with the
-   * reason instead, so a wait that ends on an unreadable screen says so.
+   * render. A capture that leaves less of the budget than it took, too
+   * little for another, fails with the reason instead, so a wait that ends on
+   * an unreadable screen says so.
    */
   private async locateSnapshot(operation: OperationContext, budget?: InputBudget): Promise<RawSnapshot | undefined> {
     const startedMs = Date.now();
     try {
       return await this.snapshotOrEmpty(operation, false, budget);
     } catch (cause) {
-      if (operation.signal.aborted || !isUnreadableCapture(cause) || Date.now() - startedMs >= operation.timeoutMs) throw cause;
+      const tookMs = Date.now() - startedMs;
+      if (operation.signal.aborted || !isUnreadableCapture(cause) || tookMs >= operation.timeoutMs - tookMs) throw cause;
       return undefined;
     }
   }
@@ -1467,9 +1478,9 @@ export class AgentDeviceSurface {
     const masked = await this.maskedScreenshot(operation.signal, budget);
     attempt.screenshots += 1;
     const name = `${String(attempt.screenshots).padStart(3, '0')}-${sanitizeFilename(label ?? 'screenshot')}.png`;
-    const relative = path.posix.join('screenshots', name);
+    const relative = path.join('screenshots', name);
     mkdirSync(path.join(attempt.artifactsDir, 'screenshots'), { recursive: true });
-    writeFileSync(path.join(attempt.artifactsDir, 'screenshots', name), masked.data);
+    writeFileSync(path.join(attempt.artifactsDir, relative), masked.data);
     return relative;
   }
 
@@ -1489,7 +1500,7 @@ export class AgentDeviceSurface {
     capture: ScreenshotCapture = {},
     budget?: InputBudget,
   ): Promise<T> {
-    const run = () =>
+    return readWithin(budget, () =>
       this.command('screenshot', async (client) => {
         const directory = mkdtempSync(path.join(tmpdir(), 'e2e-agent-device-'));
         const file = path.join(directory, 'screenshot.png');
@@ -1498,9 +1509,8 @@ export class AgentDeviceSurface {
         } finally {
           rmSync(directory, { recursive: true, force: true });
         }
-      }, signal);
-    if (budget === undefined) return run();
-    return budget.read(run);
+      }, signal),
+    );
   }
 
   /**
@@ -1530,8 +1540,8 @@ export class AgentDeviceSurface {
 
   /**
    * Viewport pixels for an observation. Best-effort: a screenshot that cannot
-   * be produced or redacted costs the observation its image, not the step;
-   * timeouts propagate so an expired read budget fails the observation.
+   * be produced or redacted costs the observation its image, not the step,
+   * unless the operation's budget ran out.
    */
   private async capturePixels(
     operation: OperationContext,
