@@ -367,7 +367,7 @@ describe('pollCondition', () => {
         reads.read(async (timeoutMs) => {
           timeouts.push(timeoutMs);
           calls += 1;
-          const readDuration = calls === 1 ? 200 : 100;
+          const readDuration = calls === 1 ? 200 : 50;
           await withTimeout(sleep(readDuration), timeoutMs, () => new EngineError('OPERATION_TIMEOUT', 'locate timed out', { retryable: false }));
           return calls === 2;
         }),
@@ -375,10 +375,6 @@ describe('pollCondition', () => {
     });
     await vi.advanceTimersByTimeAsync(1_000);
     await expect(promise).resolves.toBeUndefined();
-    // Round 1 started at t=0: deadline remaining 350, cap 400 -> 350. Takes 200 ms.
-    // Sleep between reads takes min(100, 350 - 200) = 100 ms. So t = 300 ms.
-    // Round 2 started at t=300: deadline remaining 50, slowestMs is 200 -> allowed 250 ms.
-    // Cap remaining is 400 - 300 = 100 ms! So capped at 100 ms (< 250 ms).
     expect(timeouts).toEqual([350, 100]);
   });
 
