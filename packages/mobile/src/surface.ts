@@ -871,7 +871,10 @@ export class AgentDeviceSurface {
     for (const backoffMs of SPARSE_RETRY_BACKOFF_MS) {
       if (backoffMs > 0) {
         // A sparse capture is still the screen: a retry the budget cannot fit returns it instead of timing out.
-        if (budget !== undefined && budget.remainingMs() <= backoffMs + captureMs) return last;
+        if (budget !== undefined && budget.remainingMs() <= backoffMs + captureMs) {
+          if (signal.aborted) throw new EngineError('CANCELLED', 'snapshot cancelled', { retryable: false });
+          return last;
+        }
         await sleep(backoffMs, signal);
       }
       if (signal.aborted) throw new EngineError('CANCELLED', 'snapshot cancelled', { retryable: false });

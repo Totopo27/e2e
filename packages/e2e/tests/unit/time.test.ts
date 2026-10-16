@@ -355,26 +355,31 @@ describe('pollCondition', () => {
 
   it('lets the last read run past the deadline by the longest read the poll finished, up to the window cap', async () => {
     vi.useFakeTimers();
-    const deadline = new Deadline(450);
+    const deadline = new Deadline(350);
     const timeouts: number[] = [];
     let calls = 0;
     const promise = pollReads({
       deadline,
-      reads: new ReadWindow(deadline, new Deadline(10_000)),
+      reads: new ReadWindow(deadline, new Deadline(400)),
       signal: new AbortController().signal,
       negated: false,
       evaluate: (reads) =>
         reads.read(async (timeoutMs) => {
           timeouts.push(timeoutMs);
           calls += 1;
-          await withTimeout(sleep(200), timeoutMs, () => new EngineError('OPERATION_TIMEOUT', 'locate timed out', { retryable: false }));
+          const readDuration = calls === 1 ? 200 : 100;
+          await withTimeout(sleep(readDuration), timeoutMs, () => new EngineError('OPERATION_TIMEOUT', 'locate timed out', { retryable: false }));
           return calls === 2;
         }),
       onTimeout: () => new Error('poll timed out'),
     });
     await vi.advanceTimersByTimeAsync(1_000);
     await expect(promise).resolves.toBeUndefined();
-    expect(timeouts).toEqual([450, 350]);
+    // Round 1 started at t=0: deadline remaining 350, cap 400 -> 350. Takes 200 ms.
+    // Sleep between reads takes min(100, 350 - 200) = 100 ms. So t = 300 ms.
+    // Round 2 started at t=300: deadline remaining 50, slowestMs is 200 -> allowed 250 ms.
+    // Cap remaining is 400 - 300 = 100 ms! So capped at 100 ms (< 250 ms).
+    expect(timeouts).toEqual([350, 100]);
   });
 
   it('ends on a read cut off within the longest read time of the deadline, and fails on one that hung with more left', async () => {
