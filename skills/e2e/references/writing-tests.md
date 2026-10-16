@@ -144,7 +144,7 @@ assertion. Every query also exists on a locator, scoped to its subtree.
 | `getByPlaceholder(text, { exact?, visible? })` | Inputs by placeholder. |
 | `getByText(text, { exact?, visible? })` | Visible text. |
 | `getByDisplayValue(value, { exact?, visible? })` | Inputs by current value; on the web it cannot scope child queries or be a `filter({ has })` target. |
-| `getByTestId(id, { visible? })` | `data-testid` on the web (or `web({ testIdAttribute })`), accessibility identifier or resource id on a device (React Native `testID`, SwiftUI `.accessibilityIdentifier`, Compose `testTag` with `testTagsAsResourceId` on Android, Flutter `Semantics(identifier:)`); a string matches the whole id, a RegExp tests it. Last resort. |
+| `getByTestId(id, { visible? })` | `data-testid` on the web (or `web({ testIdAttribute })`), accessibility identifier or resource id on a device (React Native `testID`, SwiftUI `.accessibilityIdentifier`, Compose `testTag` with `testTagsAsResourceId` on Android, Flutter `Semantics(identifier:)`, .NET MAUI `AutomationId`); a string matches the whole id, a RegExp tests it; on Android the `<package>:id/` prefix may be left off. Last resort. |
 
 Roles: `button`, `link`, `textbox`, `searchbox`, `combobox`, `listbox`,
 `option`, `checkbox`, `radio`, `radiogroup`, `switch`, `slider`, `spinbutton`,
@@ -414,6 +414,9 @@ the app opens itself (`target="_blank"`, `window.open`) is not followed:
   `ACTION_FAILED` when it could not be read.
 - `cookies()`, `setCookies([...])`: a target is an http(s) URL or a domain.
 - `setViewport({ width, height })`: resize.
+- `emulateMedia({ colorScheme?, reducedMotion? })`: what the page's `@media`
+  rules and `matchMedia` read, for the rest of the test. Call it before
+  `app.open` to load the page with it; a feature left out keeps its value.
 - `onDialog('accept' | 'dismiss' | handler)`: awaited; resolves to an async
   unsubscribe. Register it before the tap that opens the dialog. A handler
   gets `{ message, accept(text?), dismiss() }`, `accept` taking the prompt
@@ -421,9 +424,12 @@ the app opens itself (`target="_blank"`, `window.open`) is not followed:
   next step with `INVALID_STATE`. A throwing handler's unanswered dialog is
   dismissed too, and its error fails the next step.
 - `waitForDownload(() => trigger, { timeout? })`: returns
-  `{ path, suggestedFilename }`.
-- `keyboard.press(key)`, `keyboard.type(text)`, `mouse.*`: unfocused input;
-  prefer `locator.press` and `locator.fill`.
+  `{ path, absolutePath, suggestedFilename }`; `absolutePath` names the saved
+  runner-side file for reading its contents, including with a hosted browser.
+- `keyboard.press(key)`, `keyboard.type(text)`, `keyboard.down(key)`,
+  `keyboard.up(key)`, `mouse.*`: unfocused input. Only `down(key)` holds a
+  key or modifier until `up(key)`. `press(key)` presses and releases within
+  the call. Prefer `locator.press` and `locator.fill`.
 
 A `route`, `unroute`, or `waitForResponse` pattern is a glob string or
 `RegExp` matched against the full URL (`*` stays within one path segment,

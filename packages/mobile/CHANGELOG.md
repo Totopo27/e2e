@@ -1,5 +1,21 @@
 # @e2e-dev/mobile
 
+## 0.12.2
+
+### Patch Changes
+
+- [#1133](https://github.com/tester-army/e2e/pull/1133) [`3f9a7d8`](https://github.com/tester-army/e2e/commit/3f9a7d8cb448e3390acedd27fa4d13b60e50fb0c) Thanks [@amankansal-lt](https://github.com/amankansal-lt)! - iOS sessions on agent-device's WebDriver runtime now map `XCUIElementType*` element types onto roles, so `getByRole` matches and a shown keyboard is detected.
+
+- [#883](https://github.com/tester-army/e2e/pull/883) [`5fce7b2`](https://github.com/tester-army/e2e/commit/5fce7b2bfecc2d912223198ce6bcf4c13d0e707c) Thanks [@pvedula7](https://github.com/pvedula7)! - Executor observations carry `keyboardVisible`, the engine's measured on-screen keyboard state, absent when it can't tell. The mobile engine sets it, and the decision executor uses it to offer `dismiss_keyboard`.
+
+- [#962](https://github.com/tester-army/e2e/pull/962) [`0d3f75e`](https://github.com/tester-army/e2e/commit/0d3f75e9f67ead71fda0e0e8ec2465bb95b36904) Thanks [@reiidoda](https://github.com/reiidoda)! - Forward the worker's device selection with video recording, app state resets, device settings, alerts (including the agent's `alert` tool), and clipboard requests. `device.closeApp()`, and commands that run without an open app, stay on the selected device after `device.closeApp()` ends the session, even when several simulators or emulators are booted.
+
+## 0.12.1
+
+### Patch Changes
+
+- [#1073](https://github.com/tester-army/e2e/pull/1073) [`14b77d3`](https://github.com/tester-army/e2e/commit/14b77d320e73921e84234bfad05c92ebc4693b73) Thanks [@thymikee](https://github.com/thymikee)! - The mobile engine now bounds each input (a tap or other node action, a point action, typing, a key, `back`, a keyboard dismissal) by its budget (`actionTimeout`, or the call's `timeout`). An input that outlived it used to hold the step until the test timeout. Now an input sent that does not answer in time fails with `ACTION_MAY_HAVE_COMMITTED`, which the runner never repeats, as on the web engine; one sent with almost no budget left still gets 250 ms to answer. An input the budget ran out before, while its target was still settling, is not sent and fails with `OPERATION_TIMEOUT`. A long press or timed swipe that holds at least as long as the budget left is refused before it is sent, naming the hold and the time left. Reads (observe, locate, the relocation before a tap), launches, artifacts, and `device.*` fixture calls are unchanged: a locator poll still lets its last read finish. The `OperationContext.signal` docs in `e2e/engine` now say what it does: it aborts with the attempt or the running hook, not at `timeoutMs`.
+
 ## 0.12.0
 
 ### Minor Changes

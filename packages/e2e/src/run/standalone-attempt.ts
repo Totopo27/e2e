@@ -11,9 +11,9 @@ import { SoftFailures } from '../expect/soft.ts';
 import type { DebugTrace } from '../internal/debug.ts';
 import { classifyError, ConfigurationError, InfrastructureError, serializeError, TestTimeoutError, type SerializedError } from '../internal/errors.ts';
 import { resultId, timestamp, uuidv7 } from '../internal/ids.ts';
-import { Deadline, withTimeout } from '../internal/time.ts';
+import { Deadline, MAX_TIMER_MS, withTimeout } from '../internal/time.ts';
 import { attemptVideo } from '../internal/recording-modes.ts';
-import type { TestFixtures } from '../types.ts';
+import type { Report, TestFixtures } from '../types.ts';
 import { createAttemptArtifacts, resultSegment } from './artifacts.ts';
 import { AttemptBudget } from './budget.ts';
 import { classifyAttemptStatus, type ClosingRecord, type TargetExecutor } from './execute.ts';
@@ -53,6 +53,7 @@ export interface StandaloneAttempt {
   readonly budget: AttemptBudget;
   readonly artifactsDir: string;
   readonly tracePath: string;
+  report(): Report | undefined;
   close(): Promise<readonly SerializedError[]>;
 }
 
@@ -89,9 +90,6 @@ export interface AttemptClosed {
   readonly cleanup: AttemptRecord['cleanup'];
 }
 
-/** Longest delay `setTimeout` honors; a longer deadline needs no timer the attempt could outlive. */
-const MAX_TIMER_MS = 2 ** 31 - 1;
-
 /**
  * Validates the options and publishes a hosted attempt, synchronously, so
  * `expect` finds it before launch and no second attempt can publish over it.
@@ -110,7 +108,7 @@ export function reserveAttempt(worker: AttemptWorker, options: StandaloneSession
   if (worker.kind === 'one-shot') return { attemptId, options, end, signal, budget, soft, polls, release: () => undefined };
   const { config } = worker;
   const publication = new AbortController();
-  publishAttempt({ attemptId, testKind: 'test', assertionTimeout: config.assertionTimeout, budget, soft, polls }, publication.signal);
+  publishAttempt({ attemptId, owner: 'host', testKind: 'test', assertionTimeout: config.assertionTimeout, budget, soft, polls }, publication.signal);
   // The live attempt's secrets resolve against its own config while other hosts hold theirs.
   const releaseRegistry = holdSecretRegistry(config, { live: true });
   return { attemptId, options, end, signal, budget, soft, polls, release: () => { publication.abort(); releaseRegistry(); } };
@@ -180,24 +178,33 @@ export async function launchAttempt(
     await closeOpened({ status: 'failed', cleanup: 'complete' });
     throw cause;
   }
+  const { deadline } = budget;
+  let timedOut = false;
+  /** Fails the attempt as timed out, once, and cuts whatever is still in flight. */
+  const expire = (): void => {
+    if (timedOut) return;
+    timedOut = true;
+    const timeout = new TestTimeoutError(`session timed out after ${options.timeoutMs} ms`);
+    recordFailure(timeout, 'body');
+    end.abort(timeout);
+  };
   // An engine that ignores its operation's timeout, or a model call, must not
   // outlive the deadline: the attempt is cut the way a run's body is. One
   // tick after it, so an operation that honors the deadline reports its own
   // failure first; whatever is still in flight then fails as timed out.
-  const remaining = budget.deadline.remaining() + 1;
-  const expiry = remaining > MAX_TIMER_MS ? undefined : setTimeout(() => {
-    const timedOut = new TestTimeoutError(`session timed out after ${options.timeoutMs} ms`);
-    recordFailure(timedOut, 'body');
-    end.abort(timedOut);
-  }, remaining);
+  const remaining = deadline.remaining() + 1;
+  const expiry = remaining > MAX_TIMER_MS ? undefined : setTimeout(expire, remaining);
   expiry?.unref();
   const startedAt = timestamp();
   const startedMs = Date.now();
   const tracePath = path.join(artifacts.dir, 'trace.md');
   let ending: Promise<readonly SerializedError[]> | undefined;
+  let report: Report | undefined;
   const close = (): Promise<readonly SerializedError[]> => {
     ending ??= (async () => {
       clearTimeout(expiry);
+      // The deadline decides the outcome, not whether the timer ran before close.
+      if (deadline.expired()) expire();
       const abandonedPoll = polls.close();
       const abandonedStep = steps.abandonRunning();
       end.abort();
@@ -217,7 +224,7 @@ export async function launchAttempt(
       if (worker.kind === 'hosted') {
         try {
           const { error, status } = verdict();
-          await writeHostTrace({
+          report = await writeHostTrace({
             config, target, runId, testId: identity.testId, agent, tracePath, redact,
             title: processSecrets.redact(redact(options.name ?? target.name)),
             resultsDir: worker.resultsDir, segments: identity.segments,
@@ -241,6 +248,7 @@ export async function launchAttempt(
   return {
     runId, attemptId, fixtures: acquired.fixtures, agentRuntime: acquired.agentRuntime, session: opened, steps, budget,
     artifactsDir: artifacts.dir, tracePath, close,
+    report: () => report && structuredClone(report),
   };
 }
 

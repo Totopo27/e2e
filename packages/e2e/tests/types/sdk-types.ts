@@ -65,6 +65,8 @@ import { createAgent } from '../../src/agent/public.ts';
 import { BLOCKABLE_CODES } from '../../src/index.ts';
 // @ts-expect-error list is e2e/runner: importing e2e does not load the runner
 import { list as listFromE2E } from '../../src/index.ts';
+// @ts-expect-error suite execution belongs to e2e/runner, not the test SDK
+import { run as runFromE2E } from '../../src/index.ts';
 // @ts-expect-error openHost is e2e/runner: importing e2e does not load the runner
 import { openHost as openHostFromE2E } from '../../src/index.ts';
 // @ts-expect-error host types belong to e2e/runner, not the test SDK
@@ -80,6 +82,10 @@ import {
   type ListedPair,
   type ListOptions,
   openHost,
+  run,
+  type RunEventSink,
+  type RunOptions,
+  type RunResult,
   type OpenHostOptions,
   type OpenSessionOptions,
   type SerializedError,
@@ -91,6 +97,7 @@ isDefinedTool;
 createAgent;
 BLOCKABLE_CODES;
 listFromE2E;
+runFromE2E;
 openHostFromE2E;
 removedOpenSession;
 declare const rootHost: E2EHostFromE2E;
@@ -119,12 +126,18 @@ declare const engineSnapshot: EngineSnapshot;
 engineSnapshot.treeUnavailable satisfies true | undefined;
 // @ts-expect-error unavailable semantics are explicitly true or absent, never a separate false state.
 ({ ...engineSnapshot, treeUnavailable: false }) satisfies EngineSnapshot;
+// The measured keyboard is a yes or no, or absent when the engine did not measure it.
+engineSnapshot.keyboardVisible satisfies boolean | undefined;
+customExecutorObservation.keyboardVisible satisfies boolean | undefined;
+// @ts-expect-error the keyboard state carries no band or reason, only whether one is showing.
+({ ...engineSnapshot, keyboardVisible: { kind: 'visible' } }) satisfies EngineSnapshot;
 
 // There is no implicit target: a config names at least one, and the type says so before the loader does.
 // @ts-expect-error targets is required
 ({ cache: 'read-write' }) satisfies E2EConfig;
 ({ targets, cache: 'read-write' }) satisfies E2EConfig;
 ({ targets, failOnSkippedFailure: true }) satisfies E2EConfig;
+({ targets, maxDuration: 900_000 }) satisfies E2EConfig;
 ({ targets, cache: { mode: 'read-only', store: remoteStore, dir: 'shared-cache' } }) satisfies E2EConfig;
 ({ targets: [{ platform: 'ios' }] }) satisfies E2EConfig;
 // @ts-expect-error specVersion is gone; the runner version is the format version
@@ -185,6 +198,9 @@ attemptContext.appLog({ source: 'navigation', level: 'info', text: 'navigated to
 attemptContext.navigation('navigated to /login');
 declare const actCache: NonNullable<Awaited<ReturnType<Agent['act']>>['cache']>;
 actCache.entry satisfies string | undefined;
+actCache.recordedBy satisfies { readonly provider: string; readonly model: string } | undefined;
+// @ts-expect-error a recording model id must be a string.
+({ provider: 'test', model: 1 }) satisfies NonNullable<typeof actCache.recordedBy>;
 // @ts-expect-error what became of the recording is known once the attempt ends, so only the report has it.
 void actCache.write;
 credentials.user('admin').password satisfies Secret;
@@ -248,7 +264,7 @@ declare const reporter: Reporter;
 ({
   name: 'upload',
   onEvent: (event: RunEvent) => void event.seq,
-  onRunFinished: async (run) => [{ label: 'Results', text: run.report.run.id }],
+  onRunFinished: async (finished) => [{ label: 'Results', text: finished.report.run.id }],
 }) satisfies Reporter;
 declare const runEvent: RunEvent;
 if (runEvent.type === 'step') {
@@ -632,6 +648,40 @@ describe('async group', async () => {});
 // @ts-expect-error a suite hook sees suite fixtures only
 beforeAll((fixtures) => void fixtures.screen);
 
+// Suite execution accepts project selection, progress, and cancellation; execution settings live in config.
+declare const runResult: RunResult;
+void (run() satisfies Promise<RunResult>);
+void run({
+  cwd: '.', config: { targets }, files: ['tests/a.e2e.ts'],
+  interruptSignal: new AbortController().signal,
+  onEvent: (event) => { event satisfies RunEvent; },
+} satisfies RunOptions);
+void run({ config: 'e2e.config.ts' });
+void (runResult.exitCode satisfies RunExitCode);
+void (runResult.status satisfies RunStatus);
+void (runResult.report satisfies Report);
+void (runResult.reportPath satisfies string | undefined);
+void (runResult.aiTracePath satisfies string | undefined);
+void (((event: RunEvent) => { event.type; }) satisfies RunEventSink);
+// @ts-expect-error runtime configuration uses config, not the internal rawConfig name
+void run({ rawConfig: { targets } });
+// @ts-expect-error targetIds is an internal runner option
+void run({ targetIds: ['web'] });
+// @ts-expect-error public execution settings belong in the config
+void run({ targets: ['web'] });
+// @ts-expect-error freshGraph is a CLI option, not an embedded execution option
+void run({ freshGraph: true });
+// @ts-expect-error debug terminal output is a CLI option
+void run({ debug: true });
+// @ts-expect-error public execution settings belong in the config
+void run({ workers: 2 });
+// @ts-expect-error internal registrations are not part of the public runner
+void run({ tests: {} });
+// @ts-expect-error outcomes do not expose live resolved configuration
+runResult.config;
+// @ts-expect-error progress callbacks consume RunEvent, not arbitrary strings
+void run({ onEvent: (_event: string) => {} });
+
 // `e2e/runner` lists a selection in process. `config` is a path or a config value; `grep` is RegExp[].
 void list({
   cwd: '.', config: 'e2e.config.ts', files: ['tests/a.e2e.ts'], tags: ['smoke'], tagMode: 'all', excludeTags: ['slow'],
@@ -713,6 +763,7 @@ void (session.fixtures.device.tap satisfies () => void);
 void (session.artifactsDir satisfies string);
 void (session.tracePath satisfies string);
 void (session.steps() satisfies readonly StepRecord[]);
+void (session.report() satisfies Report | undefined);
 void (session.close() satisfies Promise<readonly SerializedError[]>);
 void (session satisfies AsyncDisposable);
 void (session[Symbol.asyncDispose]() satisfies PromiseLike<void>);
