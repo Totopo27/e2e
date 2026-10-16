@@ -917,21 +917,25 @@ describe('StepTraceSession', () => {
     vi.useFakeTimers();
     vi.setTimerTickMode('nextTimerAsync');
     const startedMs = Date.now();
-    // Recorded wait was only 1_000 ms, but assertionTimeout is 15_000 ms; effect appears after several looks
+    // Recorded wait was only 1_000 ms, but assertionTimeout is 20_000 ms; effect appears after RETRY_TIMEOUT_MS (15 s)
     const context = entryContext({ endPath: '/customers', endAnchors: [savedAnchor], endWaitMs: 1_000 });
-    const screens: (readonly SemanticNode[])[] = [[], [], [], [], [], [savedMarker]];
-    const host = {
-      ...makeHost(
-        ['/pricing', ...Array.from({ length: 40 }, () => '/customers')],
-        screens,
-      ),
+    const appearsAt = startedMs + 16_000;
+    const nextScreen = async () => ({
+      kind: 'semantic' as const,
+      nodes: nodeMap(Date.now() >= appearsAt ? [savedMarker] : []),
+      viewport: { width: 1280, height: 720 },
+      path: '/customers',
+    });
+    const host: StepCacheHost = {
+      ...makeHost(['/customers']),
+      observe: nextScreen,
       remainingMs: () => 60_000,
     };
-    const session = makeSession(context, host, { assertionTimeout: 15_000 });
+    const session = makeSession(context, host, { assertionTimeout: 20_000 });
     const verdict = await session.begin();
     expect(verdict).toMatchObject({ status: 'passed' });
     expect(session.cacheInfo).toMatchObject({ mode: 'self-finalized' });
-    expect(Date.now() - startedMs).toBeGreaterThan(1_000);
+    expect(Date.now() - startedMs).toBeGreaterThanOrEqual(16_000);
   });
 
   it('evicts an entry that did not serve a pass with nothing to record in its place', async () => {
