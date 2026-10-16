@@ -68,6 +68,8 @@ export interface StepCacheOptions {
   readonly maxActions: number;
   /** Timeline index of the step being dispatched. */
   readonly stepIndex: number;
+  /** Assertion timeout for end state verification under load. */
+  readonly assertionTimeout?: number;
 }
 
 /**
@@ -506,9 +508,10 @@ export class StepTraceSession {
       mismatch = deltaMismatch(trace, screen.nodes, beforeNodes);
       return mismatch === undefined;
     };
+    const endWaitMs = Math.max(trace.endWaitMs ?? 0, this.options.assertionTimeout ?? 0);
     const matches = (await verifyEndState(this.host, holds, {
       initial: arrived,
-      ...(trace.endWaitMs === undefined ? {} : { waitMs: trace.endWaitMs }),
+      ...(endWaitMs > 0 ? { waitMs: endWaitMs } : {}),
     })) && this.host.traceEligible;
     return matches ? { matches } : { matches, ...(mismatch === undefined ? {} : { failure: mismatch }) };
   }

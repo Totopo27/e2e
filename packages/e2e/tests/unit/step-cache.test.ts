@@ -913,6 +913,27 @@ describe('StepTraceSession', () => {
     expect(Date.now() - startedMs).toBeGreaterThanOrEqual(30_000);
   });
 
+  it('waits out the larger of recorded endWaitMs and assertionTimeout for the end state', async () => {
+    vi.useFakeTimers();
+    vi.setTimerTickMode('nextTimerAsync');
+    const startedMs = Date.now();
+    // Recorded wait was only 1_000 ms, but assertionTimeout is 15_000 ms; effect appears after several looks
+    const context = entryContext({ endPath: '/customers', endAnchors: [savedAnchor], endWaitMs: 1_000 });
+    const screens: (readonly SemanticNode[])[] = [[], [], [], [], [], [savedMarker]];
+    const host = {
+      ...makeHost(
+        ['/pricing', ...Array.from({ length: 40 }, () => '/customers')],
+        screens,
+      ),
+      remainingMs: () => 60_000,
+    };
+    const session = makeSession(context, host, { assertionTimeout: 15_000 });
+    const verdict = await session.begin();
+    expect(verdict).toMatchObject({ status: 'passed' });
+    expect(session.cacheInfo).toMatchObject({ mode: 'self-finalized' });
+    expect(Date.now() - startedMs).toBeGreaterThan(1_000);
+  });
+
   it('evicts an entry that did not serve a pass with nothing to record in its place', async () => {
     let deleted = 0;
     const base = entryContext({ actions: [{ name: 'tap', summary: 'tap button "Save"', target: { role: 'button', name: 'Save' } }], startPath: '/form', endAnchors: [savedAnchor] });
