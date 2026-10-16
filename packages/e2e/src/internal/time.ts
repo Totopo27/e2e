@@ -119,46 +119,60 @@ export const NEGATION_GRACE_MS = 1000;
 
 export interface PollConditionOptions {
   readonly deadline: Deadline;
-  /** The window over `deadline` that `evaluate`'s reads run in; without one, reads end at `deadline`. */
-  readonly reads?: ReadWindow;
   readonly signal: AbortSignal;
   readonly negated: boolean;
   /**
-   * Evaluates the positive condition once, every read run through `reads`
-   * or bounded by `deadline`: a read on a longer budget outlasts the poll.
-   * Returns undefined when the condition cannot be evaluated yet: the
-   * positive poll keeps waiting and the negation grace window resets.
+   * Evaluates the positive condition once, every read bounded by
+   * `deadline`: a read on a longer budget outlasts the poll. Returns
+   * undefined when the condition cannot be evaluated yet: the positive poll
+   * keeps waiting and the negation grace window resets.
    */
-  evaluate(reads: ReadWindow): Promise<boolean | undefined>;
+  evaluate(): Promise<boolean | undefined>;
   /** Builds the poll's failure; `cause` is the read the deadline cut off, when one did. */
   onTimeout(cause?: unknown): Error | Promise<Error>;
+}
+
+/** `pollCondition` options whose reads run in a `ReadWindow` over the deadline. */
+export interface PollReadsOptions extends Omit<PollConditionOptions, 'evaluate'> {
+  readonly reads: ReadWindow;
+  /** Evaluates the positive condition once, every read run through `reads`. */
+  evaluate(reads: ReadWindow): Promise<boolean | undefined>;
 }
 
 /**
  * Polls a condition until it holds (or, when negated, until its negation has
  * held continuously for the negation grace window), throwing the caller's
  * error at the deadline. No sleep runs past the deadline, so the last read
- * starts at it; a `reads` window with a cap lets it run past by the longest
- * read the poll has finished.
+ * starts at it and never sees a state that arrived later.
  *
  * A negation holds from the moment the read that first saw it was issued, so
  * a slow read counts toward the window. A budget shorter than the window
  * still has to be satisfiable: the negation then only needs to hold for the
- * whole budget, and passes at the deadline on what it has seen. A read the
- * deadline cut off (see `ReadWindow.cutOff`) after an earlier one completed
- * saw nothing: the poll ends there. A negation then passes if it has held
- * long enough by the time the read is cut off: the read left less than one
- * poll tick, or one read's time, unseen, so a short budget still passes at
- * its deadline on what it saw.
+ * whole budget, and passes at the deadline on what it has seen, since a read
+ * past the deadline has no budget left. A read the deadline cut off (an
+ * `OPERATION_TIMEOUT` on a read that started with under one poll tick left)
+ * after an earlier one completed saw nothing: the poll ends there. A negation
+ * then passes if it has held long enough by the time the read is cut off: the
+ * read left less than one poll tick unseen, no more than the gap between any
+ * two reads, so a short budget still passes at its deadline on what it saw.
  */
-export async function pollCondition(options: PollConditionOptions): Promise<void> {
-  const { deadline, negated } = options;
+export function pollCondition(options: PollConditionOptions): Promise<void> {
+  return pollReads({ ...options, reads: new ReadWindow(options.deadline) });
+}
+
+/**
+ * `pollCondition` with its reads run through `options.reads`: a window with a
+ * cap lets the last read run past the deadline by the longest read the poll
+ * has finished, and a read cut off (see `ReadWindow.cutOff`) is one that
+ * started with under one poll tick, or that longest read, left.
+ */
+export async function pollReads(options: PollReadsOptions): Promise<void> {
+  const { deadline, negated, reads } = options;
   const startedAt = Date.now();
   const grace = Math.min(NEGATION_GRACE_MS, deadline.remaining(startedAt));
   let readAt = startedAt;
   let holdingSince: number | undefined;
   const holds = (now: number): boolean => holdingSince !== undefined && now - holdingSince >= grace;
-  const reads = options.reads ?? new ReadWindow(deadline);
   let sampled = false;
   for (;;) {
     const startedWithMs = deadline.remaining(readAt);

@@ -43,7 +43,7 @@ import {
   testIdQuery,
   textQuery,
 } from './expression.ts';
-import { type Deadline, isOperationTimeout, POLL_INTERVAL_MS, pollCondition } from '../internal/time.ts';
+import { type Deadline, isOperationTimeout, POLL_INTERVAL_MS, pollReads } from '../internal/time.ts';
 import { SampleHistory } from '../expect/samples.ts';
 import type { ScreenshotContext } from '../run/screenshots.ts';
 
@@ -606,7 +606,7 @@ class LocatorImpl extends ScreenImpl implements Locator {
       const startedMs = Date.now();
       const samples = new SampleHistory('waitFor', (text) => engine.redact(text));
       await samples.record(engine, () =>
-        pollCondition({
+        pollReads({
           deadline,
           reads: engine.reads(deadline),
           signal: engine.signal,

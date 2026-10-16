@@ -14,7 +14,7 @@ import {
   type TextPattern,
 } from '../internal/text.ts';
 import { isValueControl } from '../internal/roles.ts';
-import { pollCondition, type ReadWindow } from '../internal/time.ts';
+import { pollReads, type ReadWindow } from '../internal/time.ts';
 import { SampleHistory } from './samples.ts';
 import { attributeOf, denySecureRead, isNodeVisible } from '../locator/engine.ts';
 import { describeExpression } from '../locator/expression.ts';
@@ -173,7 +173,7 @@ class AsyncExpectationImpl implements AsyncExpectation {
       let lastSample: Sample = { count: 0, node: null, nodes: [] };
       const samples = new SampleHistory('expect', (text) => engine.redact(text));
       await samples.record(engine, () =>
-        pollCondition({
+        pollReads({
           deadline,
           reads: engine.reads(deadline),
           signal: engine.signal,

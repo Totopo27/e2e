@@ -5,6 +5,7 @@ import {
   NEGATION_GRACE_MS,
   POLL_INTERVAL_MS,
   pollCondition,
+  pollReads,
   ReadWindow,
   sleep,
   withTimeout,
@@ -357,7 +358,7 @@ describe('pollCondition', () => {
     const deadline = new Deadline(450);
     const timeouts: number[] = [];
     let calls = 0;
-    const promise = pollCondition({
+    const promise = pollReads({
       deadline,
       reads: new ReadWindow(deadline, new Deadline(10_000)),
       signal: new AbortController().signal,
@@ -382,8 +383,9 @@ describe('pollCondition', () => {
     const poll = (timeoutMs: number) => {
       const deadline = new Deadline(timeoutMs);
       let calls = 0;
-      return pollCondition({
+      return pollReads({
         deadline,
+        reads: new ReadWindow(deadline),
         signal: new AbortController().signal,
         negated: false,
         evaluate: (reads) =>

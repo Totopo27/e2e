@@ -11,7 +11,7 @@ import type { LocatorExpression } from '../engine/surface.ts';
 import { writeFileAtomic } from '../internal/atomic-write.ts';
 import { ConfigurationError, TestError } from '../internal/errors.ts';
 import { compareImages, decodePng, encodePng, type ImageComparison, type RgbaImage } from '../internal/image.ts';
-import { pollCondition, type Deadline, type ReadWindow } from '../internal/time.ts';
+import { pollReads, type Deadline, type ReadWindow } from '../internal/time.ts';
 import { describeExpression } from '../locator/expression.ts';
 import type { ScreenContext } from '../locator/screen.ts';
 import type { ScreenshotContext } from '../run/screenshots.ts';
@@ -112,7 +112,7 @@ async function matchOrSettle(run: Run, expected: RgbaImage | undefined, deadline
   let unsettled: readonly [RgbaImage, RgbaImage] | undefined;
   let settled: RgbaImage | undefined;
   let captures = 0;
-  await pollCondition({
+  await pollReads({
     deadline,
     reads: run.reads,
     signal: run.context.engine.signal,
@@ -187,7 +187,7 @@ async function expectDifferent(run: Run, expected: RgbaImage | undefined, deadli
   }
   let compared = false;
   let missing: string | undefined;
-  await pollCondition({
+  await pollReads({
     deadline,
     reads: run.reads,
     signal: run.context.engine.signal,
